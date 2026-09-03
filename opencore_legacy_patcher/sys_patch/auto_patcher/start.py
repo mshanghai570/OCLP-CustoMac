@@ -19,6 +19,7 @@ from ...datasets import css_data
 
 from ...wx_gui import (
     gui_entry,
+    gui_sys_patch_display,
     gui_support
 )
 from ...support import (
@@ -169,7 +170,7 @@ Please check the Github page for more information about this release."""
                 args = [
                     "/usr/bin/osascript",
                     "-e",
-                    f"""display dialog "{self.constants.patcher_name} has detected you're running without Root Patches, and would like to install them.\n\nmacOS wipes all root patches during OS installs and updates, so they need to be reinstalled.\n\nFollowing Patches have been detected for your system: \n{patch_string}\nWould you like to apply these patches?{warning_str}" """
+                    f"""display dialog "{self.constants.patcher_name} has detected that your system is currently running without Root Patches.\n\nWould you like to review the available Root Patches and select which ones to apply?{warning_str}" buttons {{"Cancel", "Review Root Patches"}} default button "Review Root Patches" cancel button "Cancel" """
                     f'with icon POSIX file "{self.constants.app_icon_path}"',
                 ]
                 output = subprocess.run(
@@ -178,7 +179,7 @@ Please check the Github page for more information about this release."""
                     stderr=subprocess.STDOUT
                 )
                 if output.returncode == 0:
-                    gui_entry.EntryPoint(self.constants).start(entry=gui_entry.SupportedEntryPoints.SYS_PATCH, start_patching=True)
+                    gui_entry.EntryPoint(self.constants).start(entry=gui_sys_patch_display.SysPatchDisplayFrame)
                 return
 
             else:

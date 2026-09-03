@@ -5,7 +5,6 @@ Primarily for caching updates required for incoming OS (ex. KDKs)
 
 import wx
 import sys
-import time
 import logging
 import threading
 
@@ -104,16 +103,10 @@ class OSUpdateFrame(wx.Frame):
 
         self.frame.Show()
 
-        self.did_cancel = -1
-        self._notifyUser()
-
-        # Allow 10 seconds for the user to cancel the download
-        # If nothing, continue
-        for i in range(0, 10):
-            if self.did_cancel == 1:
-                self._exit()
-            if self.did_cancel == -1:
-                time.sleep(1)
+        if self._notifyUser() is False:
+            logging.info("User cancelled OS caching")
+            self._exit()
+            return
 
         for item in download_objects:
             name = item
@@ -232,30 +225,36 @@ class OSUpdateFrame(wx.Frame):
         self.frame.SetSize((360, 140))
 
 
-    def _notifyUser(self) -> None:
+    def _notifyUser(self) -> bool:
         """
-        Notify user of what OCLP is doing
-        Note will be spawned through wx.CallAfter
-        """
-        threading.Thread(target=self._notifyUserThread).start()
+        Ask the user whether to continue preparing resources for the update.
 
-
-    def _notifyUserThread(self) -> None:
+        Only the explicit Continue result authorizes resource processing.
         """
-        Notify user of what OCLP is doing
-        """
-        message=f"{self.constants.patcher_name} has detected that a macOS update is being downloaded:\n{self.os_data[0]} ({self.os_data[1]})\n\nThe patcher needs to prepare the system for the update, and will download any additional resources it may need post-update.\n\nThis may take a few minutes, the patcher will exit when it is done."
-        # Yes/No for caching
-        dlg = wx.MessageDialog(self.frame, message=message, caption=self.constants.patcher_name, style=wx.YES_NO | wx.ICON_INFORMATION)
-        dlg.SetYesNoLabels("&Ok", "&Cancel")
-        result = dlg.ShowModal()
-        if result == wx.ID_NO:
-            logging.info("User cancelled OS caching")
-            if hasattr(self, "download_obj"):
-                self.download_obj.stop()
-            self.did_cancel = 1
-        else:
-            self.did_cancel = 0
+        message = (
+            f"{self.constants.patcher_name} has detected that a macOS update is being downloaded:\n"
+            f"{self.os_data[0]} ({self.os_data[1]})\n\n"
+            "The patcher needs to prepare the system for the update, and will download any additional resources it may need post-update.\n\n"
+            "Warning: The automatic update workflow does not support selective Root Patching. On a clean system, Modern Wi-Fi and Modern Audio are both applied by default, using automatic KDK selection.\n\n"
+            "Manual Wi-Fi/Audio selection and Manual KDK selection are not available.\n\n"
+            "This may take a few minutes, the patcher will exit when it is done."
+        )
+        dlg = None
+        try:
+            dlg = wx.MessageDialog(
+                self.frame,
+                message=message,
+                caption=self.constants.patcher_name,
+                style=wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
+            )
+            dlg.SetYesNoLabels("&Continue", "&Cancel")
+            return dlg.ShowModal() == wx.ID_YES
+        except Exception as error:
+            logging.error(f"Unable to obtain explicit OS caching authorization: {error}")
+            return False
+        finally:
+            if dlg is not None:
+                dlg.Destroy()
 
     def _exit(self):
         """

@@ -31,18 +31,21 @@ class MinimalUpdaterComparatorTests(unittest.TestCase):
     def test_equal_tagged_build_is_not_an_update(self) -> None:
         self.assertFalse(self._remote_is_newer("3.0.0", "v3.0.0", "refs/tags/v3.0.0"))
 
-    def test_newer_remote_release_is_an_update(self) -> None:
-        self.assertTrue(self._remote_is_newer("3.0.0", "v3.0.1", "refs/heads/main"))
+    def test_3_0_1_receives_3_0_2_update(self) -> None:
+        self.assertTrue(self._remote_is_newer("3.0.1", "v3.0.2", "refs/tags/v3.0.1"))
 
-    def test_equal_current_release_is_not_an_update(self) -> None:
-        self.assertFalse(self._remote_is_newer("3.0.1", "v3.0.1", "refs/tags/v3.0.1"))
+    def test_equal_3_0_2_release_is_not_an_update(self) -> None:
+        self.assertFalse(self._remote_is_newer("3.0.2", "v3.0.2", "refs/tags/v3.0.2"))
 
-    def test_older_remote_release_is_not_an_update(self) -> None:
+    def test_3_0_2_does_not_receive_older_3_0_1(self) -> None:
         self.assertFalse(self._remote_is_newer("3.0.2", "v3.0.1", "refs/tags/v3.0.2"))
 
+    def test_equal_3_0_2_branch_build_is_not_an_update(self) -> None:
+        self.assertFalse(self._remote_is_newer("3.0.2", "v3.0.2", "refs/heads/main"))
+
     def test_v_prefix_normalizes_with_existing_version_parser(self) -> None:
-        self.assertEqual(version.parse("v3.0.1"), version.parse("3.0.1"))
-        self.assertTrue(self._remote_is_newer("v3.0.0", "v3.0.1", "refs/heads/main"))
+        self.assertEqual(version.parse("v3.0.2"), version.parse("3.0.2"))
+        self.assertTrue(self._remote_is_newer("v3.0.1", "v3.0.2", "refs/heads/main"))
 
 
 if __name__ == "__main__":

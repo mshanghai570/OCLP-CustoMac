@@ -1,5 +1,11 @@
 # OpenCore Legacy Patcher changelog
 
+## 3.0.2
+- Path 1 OTA resource preparation now requires explicit Cancel / Continue authorization and no longer continues automatically after a timeout
+- Path 2 missing-Root-Patches detection now opens the normal Root Patch selection UI instead of immediately starting Root Patching
+- Existing Modern Wi-Fi / Modern Audio selection and AUTO / Manual KDK workflows remain available through the normal Root Patch UI
+- No intended changes to application updater semantics, hardware detection, Root Patch families, KDK policy, Revert, AutoPkg, payloads, or EFI behavior
+
 ## 3.0.1
 - Fix the inherited same-version application update loop
 - No intended Root Patch, wireless, audio, KDK, payload, or EFI functional changes
