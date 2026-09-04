@@ -10,9 +10,11 @@
 
 OCLP-CustoMac is an independent, focused OpenCore Legacy Patcher derivative developed primarily for advanced Custom Mac and Hackintosh systems. Its first public release is fully runtime validated on **macOS Tahoe 26.x / Darwin 25**.
 
-Current release: **[OCLP-CustoMac 3.0.1 — macOS Tahoe](https://github.com/kgp-macPro/OCLP-CustoMac/releases/tag/v3.0.1)**
+Current release: **[OCLP-CustoMac 3.0.2 — macOS Tahoe](https://github.com/kgp-macPro/OCLP-CustoMac/releases/latest)**
 
-Version 3.0.1 is a minimal maintenance hotfix for the inherited same-version application-update loop. It contains no intended Root Patch, Modern Wireless, Modern Audio / AppleHDA, KDK, payload, or EFI functional changes.
+Version 3.0.2 is a focused safety and workflow update for two separate inherited mechanisms: Pre-Update Resource Preparation and Post-Login Automatic Root Patching.
+
+Pre-update preparation now requires an explicit Cancel or Continue decision and no longer continues after silence or timeout. Independently, the post-login missing-Root-Patches prompt now routes **Review Root Patches** through the normal CustoMac selection GUI instead of bypassing it. Existing Modern Wi-Fi / Modern Audio selection, AUTO / Manual KDK, hardware detection, Root Patch families, payloads, Revert, and EFI behavior remain unchanged.
 
 The registered root-patch families are deliberately limited to:
 
@@ -121,6 +123,34 @@ Revert Root Patches
 
 Selection affects root payloads only. OCLP-CustoMac does not mutate EFI, DeviceProperties, ACPI, DMAR, NVRAM, or hardware identity as a side effect of Modern Wi-Fi selection.
 
+### Pre-Update Resource Preparation
+
+This mechanism can become active while a macOS update is being downloaded or prepared. Its preparation phase was successfully reconstructed: it identifies the upcoming macOS build and determines, prepares, or caches resources that may be required for that target build. **Pre-Update Resource Preparation itself does not apply Root Patches.**
+
+The subsequent update-time process could not be reconstructed completely because the specific historical macOS-update event and evidence needed to trace the full handoff were not captured. In practice, that subsequent behavior had been observed to leave Modern Wi-Fi and Modern Audio available immediately after the update.
+
+Without a verified end-to-end handoff, CustoMac-specific selection semantics could not safely be added to this mechanism. A proper redesign would require a verified way to transport and revalidate individual Modern Wi-Fi, Modern Audio, Manual KDK, and persistent selection state across the complete update-time process. That architecture was not established by the audit, so 3.0.2 deliberately does not redesign the inherited mechanism.
+
+The 3.0.2 change is intentionally limited to removing the inherited ten-second automatic continuation and requiring an explicit **Cancel** or **Continue** decision. No response, closing the dialog, dismissal, or any other non-affirmative result can ever mean Continue.
+
+For OCLP-CustoMac, Pre-Update Resource Preparation is **not** the recommended Root Patch workflow. Normally choose **Cancel**. Choose **Continue** only if you deliberately want to use this inherited automatic update-resource-preparation workflow, Modern Wi-Fi and Modern Audio are both applicable, and you are confident that a suitable and working KDK is available for the target macOS build. The AUTO KDK policy may use an eligible closest match.
+
+### Post-Login Automatic Root Patching
+
+This is a separate and independent mechanism. It runs after login when OCLP-CustoMac detects that the system is currently running without Root Patches; it has no architectural dependency on Pre-Update Resource Preparation.
+
+Before 3.0.2, the prompt already waited for explicit user confirmation and had no timer. After confirmation, however, it bypassed the normal CustoMac Root Patch Selection GUI and used automatic patch selection. On a clean system where both families were applicable, Modern Wi-Fi and Modern Audio were selected together with automatic KDK handling.
+
+In 3.0.2, the prompt offers **Cancel** and **Review Root Patches**. Choosing Review Root Patches opens the normal CustoMac Root Patch Selection GUI, where the user can choose, as applicable:
+
+- Modern Wi-Fi only;
+- Modern Audio only;
+- Modern Wi-Fi + Modern Audio;
+- AUTO KDK;
+- Manual KDK.
+
+Root Patching begins only after the user explicitly chooses **Start Root Patching**. The same normal selection GUI remains available manually by opening OCLP-CustoMac and choosing **Post-Install Root Patch**.
+
 ## Intel Wi-Fi Device Support
 
 OCLP-CustoMac directly recognizes:
@@ -175,6 +205,12 @@ After Gate 1, KGP physically replaced AX210 with BCM943602CDP and retained the a
 This **Gate 2 — PASS** result confirms that the shared Modern Wireless root-patch environment is hardware-neutral between the validated Intel and Broadcom paths. It does not represent a new Broadcom Revert -> CLEAN -> Root Patch cycle; Broadcom detection and patch application were separately runtime validated during development, and the final GUI-branding cleanup changed no related functional code.
 
 **Publication runtime gates: COMPLETE.**
+
+### Runtime validation
+
+The final OCLP-CustoMac 3.0.2 tag build was successfully validated by KGP on the reference system under macOS Tahoe 26.6.2.
+
+The established Intel and Broadcom validation baseline remains unchanged.
 
 ## Kernel Debug Kit Handling
 
