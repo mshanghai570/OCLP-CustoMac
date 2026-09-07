@@ -14,6 +14,8 @@ class Phase4DiskImageTests(unittest.TestCase):
         generator = disk_images.GenerateDiskImages(reset_dmg_cache=False)
 
         with mock.patch.object(Path, "exists", return_value=False), \
+             mock.patch.object(generator.payload_contract, "validate_payload_root"), \
+             mock.patch.object(generator.payload_contract, "validate_payload_dmg"), \
              mock.patch.object(disk_images.subprocess_wrapper, "run_and_verify") as run_and_verify:
             generator._generate_payloads_dmg()
 

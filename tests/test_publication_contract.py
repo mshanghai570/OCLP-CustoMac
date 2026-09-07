@@ -33,7 +33,7 @@ class PublicationContractTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         current = constants.Constants()
         self.assertEqual(current.patcher_name, "OCLP-CustoMac")
-        self.assertEqual(current.patcher_version, "3.0.2")
+        self.assertEqual(current.patcher_version, "3.0.3")
         self.assertEqual(current.project_identity, "OCLP 3.0.0 Nightly - amfipassbeta Edition v2.0")
 
         spec = (root / "OpenCore-Patcher-GUI.spec").read_text()
@@ -104,7 +104,7 @@ class PublicationContractTests(unittest.TestCase):
         self.assertEqual(current.repo_link, expected_repo)
         self.assertEqual(
             current.installer_pkg_url,
-            f"{expected_repo}/releases/download/v3.0.2/AutoPkg-Assets.pkg",
+            f"{expected_repo}/releases/download/v3.0.3/AutoPkg-Assets.pkg",
         )
 
         operational_sources = [

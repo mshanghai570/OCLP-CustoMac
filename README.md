@@ -10,11 +10,11 @@
 
 OCLP-CustoMac is an independent, focused OpenCore Legacy Patcher derivative developed primarily for advanced Custom Mac and Hackintosh systems. Its first public release is fully runtime validated on **macOS Tahoe 26.x / Darwin 25**.
 
-Current release: **[OCLP-CustoMac 3.0.2 — macOS Tahoe](https://github.com/kgp-macPro/OCLP-CustoMac/releases/latest)**
+Current release: **[OCLP-CustoMac 3.0.3 — macOS Tahoe](https://github.com/kgp-macPro/OCLP-CustoMac/releases/latest)**
 
-Version 3.0.2 is a focused safety and workflow update for two separate inherited mechanisms: Pre-Update Resource Preparation and Post-Login Automatic Root Patching.
+Version 3.0.3 is a focused build/package integrity maintenance release correcting an inherited **Build and Install OpenCore** payload-composition mismatch. The stale frozen payload resource set dates back to public 3.0.0 and was inherited unchanged by 3.0.1 and 3.0.2. Normal CustoMac Root Patching was unaffected.
 
-Pre-update preparation now requires an explicit Cancel or Continue decision and no longer continues after silence or timeout. Independently, the post-login missing-Root-Patches prompt now routes **Review Root Patches** through the normal CustoMac selection GUI instead of bypassing it. Existing Modern Wi-Fi / Modern Audio selection, AUTO / Manual KDK, hardware detection, Root Patch families, payloads, Revert, and EFI behavior remain unchanged.
+Version 3.0.3 adds payload/component coherence safeguards: current component archive paths are derived from the source configuration, the actual contained OpenCore version is verified, and a stale or incompatible `payloads.dmg` is rejected or safely regenerated before it can be embedded in an application or package.
 
 The registered root-patch families are deliberately limited to:
 
@@ -22,6 +22,22 @@ The registered root-patch families are deliberately limited to:
 - **Modern Audio / AppleHDA**
 
 No graphics, Non-Metal, or unrelated inherited OCLP root-patch family is registered. The inherited OCLP source infrastructure remains present, but those other detector families cannot enter OCLP-CustoMac's final root-patch plan. The same narrow registry applies if OCLP-CustoMac is executed on genuine Apple Intel hardware.
+
+## AMFI Configuration — Important
+
+The validated OCLP-CustoMac configuration uses:
+
+**`AMFIPass.kext` 1.4.1 + boot argument `-amfipassbeta`**
+
+`amfi=0x80` is not required for the validated OCLP-CustoMac configuration.
+
+OCLP-CustoMac does not automatically install, remove, or rewrite `AMFIPass.kext` or EFI boot arguments. They remain part of the user-managed OpenCore EFI.
+
+| Edition | AMFI configuration |
+|---|---|
+| Preserved Reference Edition | `amfi=0x80` + `ipc_control_port_options=0` |
+| amfipassbeta Edition | `AMFIPass.kext` 1.4.1 + `-amfipassbeta` |
+| OCLP-CustoMac | `AMFIPass.kext` 1.4.1 + `-amfipassbeta` |
 
 ## Why OCLP-CustoMac Exists
 
@@ -66,7 +82,7 @@ Repository: [kgp-macPro/OCLP-lzhoang2801-amfipassbeta](https://github.com/kgp-ma
 
 - conservative and extensively tested on real systems over many months;
 - remains close to the preserved Nightly architecture;
-- uses `AMFIPass.kext + -amfipassbeta`;
+- uses `AMFIPass.kext` 1.4.1 + `-amfipassbeta`; `amfi=0x80` is not required;
 - its documented Intel configuration uses a Broadcom `IOName` spoof with AirportItlwm;
 - remains fully available, and satisfied users do not need to migrate.
 
@@ -76,6 +92,7 @@ Repository: [kgp-macPro/OCLP-CustoMac](https://github.com/kgp-macPro/OCLP-CustoM
 
 - further-developed focused branch with direct Intel detection;
 - does not require a Broadcom `IOName` spoof for Intel detection;
+- validated with `AMFIPass.kext` 1.4.1 + `-amfipassbeta`; `amfi=0x80` is not required;
 - selectable Modern Wi-Fi and Modern Audio;
 - automatic and optional manual KDK selection;
 - strengthened root-patch recovery;
@@ -93,6 +110,12 @@ Repository: [kgp-macPro/OCLP-CustoMac](https://github.com/kgp-macPro/OCLP-CustoM
 | Darwin 26 / Golden Gate | Outside the current root-patch support scope |
 
 Modern Audio is native/not applicable on Sequoia. Source reachability is not a support promise: Tahoe/Darwin 25 is the first-release support claim.
+
+## Build and Install OpenCore Support Boundary
+
+**Build and Install OpenCore** is an inherited OCLP workflow. OCLP-CustoMac is developed primarily and physically runtime-validated for advanced Custom Mac / Hackintosh Root Patching.
+
+The 3.0.3 packaging correction restores the inherited EFI-builder resources to the component versions already declared by the source. It does not constitute expanded runtime validation or a general support commitment for genuine Apple Intel Macs.
 
 ## Root Patch Selection
 
@@ -206,11 +229,9 @@ This **Gate 2 — PASS** result confirms that the shared Modern Wireless root-pa
 
 **Publication runtime gates: COMPLETE.**
 
-### Runtime validation
+### Root Patch runtime validation baseline
 
-The final OCLP-CustoMac 3.0.2 tag build was successfully validated by KGP on the reference system under macOS Tahoe 26.6.2.
-
-The established Intel and Broadcom validation baseline remains unchanged.
+The final OCLP-CustoMac 3.0.2 tag build was successfully validated by KGP on the reference system under macOS Tahoe 26.6.2. Version 3.0.3 does not change Root Patch/runtime behavior; the established Intel and Broadcom runtime-validation baseline therefore remains unchanged.
 
 ## Kernel Debug Kit Handling
 

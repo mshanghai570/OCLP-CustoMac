@@ -9,6 +9,8 @@ from pathlib import Path
 from opencore_legacy_patcher import constants
 from opencore_legacy_patcher.support import subprocess_wrapper
 
+from .payload_contract import PayloadContract, PayloadContractError
+
 
 
 class GenerateDiskImages:
@@ -18,6 +20,7 @@ class GenerateDiskImages:
         Initialize
         """
         self.reset_dmg_cache = reset_dmg_cache
+        self.payload_contract = PayloadContract()
 
 
     def _delete_extra_binaries(self):
@@ -60,10 +63,19 @@ class GenerateDiskImages:
         Apple's notarization system and inclusion of kernel extensions
         """
 
-        if Path("./payloads.dmg").exists():
+        payload_image = Path("./payloads.dmg")
+        self.payload_contract.validate_payload_root(Path("./payloads"))
+
+        if payload_image.exists():
             if self.reset_dmg_cache is False:
-                print("- payloads.dmg already exists, skipping creation")
-                return
+                try:
+                    self.payload_contract.validate_payload_dmg(payload_image)
+                except PayloadContractError as error:
+                    print("- Existing payloads.dmg is incompatible with current source; regenerating")
+                    print(error)
+                else:
+                    print("- payloads.dmg already exists and passed current payload contract")
+                    return
 
             print("- Removing old payloads.dmg")
             subprocess_wrapper.run_and_verify(
@@ -83,7 +95,8 @@ class GenerateDiskImages:
             '-passphrase', 'password', '-encryption'
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        print("DMG generation complete")
+        self.payload_contract.validate_payload_dmg(payload_image)
+        print("DMG generation and payload contract validation complete")
 
 
     def _download_resources(self):

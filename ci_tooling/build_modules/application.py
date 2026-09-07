@@ -8,6 +8,8 @@ from opencore_legacy_patcher.volume  import generate_copy_arguments
 from opencore_legacy_patcher.support import subprocess_wrapper
 from ci_tooling.build_metadata import SourceBuildMetadata
 
+from .payload_contract import PayloadContract
+
 
 class GenerateApplication:
     """
@@ -45,6 +47,7 @@ class GenerateApplication:
             _args.append("--clean")
 
         subprocess_wrapper.run_and_verify(_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        PayloadContract().validate_application(self._application_output)
 
 
     def _embed_analytics_key(self) -> None:

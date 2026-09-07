@@ -5,9 +5,12 @@ package.py: Generate packages (Installer, Uninstaller, AutoPkg-Assets)
 import tempfile
 import macos_pkg_builder
 
+from pathlib import Path
+
 from opencore_legacy_patcher import constants
 
 from .package_scripts import GenerateScripts
+from .payload_contract import PayloadContract
 
 
 class GeneratePackage:
@@ -85,6 +88,9 @@ class GeneratePackage:
         """
         Generate OpenCore-Patcher.pkg
         """
+        payload_contract = PayloadContract()
+        payload_contract.validate_application(Path("./dist/OpenCore-Patcher.app"))
+
         print("Generating OpenCore-Patcher-Uninstaller.pkg")
         _tmp_uninstall = tempfile.NamedTemporaryFile(delete=False)
         with open(_tmp_uninstall.name, "w") as f:
@@ -123,6 +129,8 @@ class GeneratePackage:
             pkg_title=constants.Constants().patcher_name,
             pkg_welcome=self._generate_installer_welcome(),
         ).build() is True
+
+        payload_contract.validate_package(Path("./dist/OpenCore-Patcher.pkg"))
 
         print("Generating AutoPkg-Assets.pkg")
 
