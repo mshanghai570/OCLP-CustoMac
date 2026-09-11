@@ -388,6 +388,16 @@ The fully validated configuration uses `DisableIoMapper=true`. AppleVTD operatio
 
 The pre-publication audit found no grounded localized OCLP-only fix for Broadcom. Intel investigation additionally reaches AirportItlwm's PCI, DMA, and IOMMU behavior. This release does not modify DMAR, the XHC14 Reserved Memory Region, DeviceProperties, ACPI, IOMMU settings, or the user's EFI.
 
+**Broadcom / AppleVTD:** The fully validated OCLP-CustoMac 3.0.3 baseline
+above uses `DisableIoMapper=true`. Users who want to keep AppleVTD/IOMMU
+enabled with the supported legacy Broadcom configuration under macOS Tahoe
+can instead use the independent experimental
+[BroadcomVTD-Tahoe](https://github.com/kgp-macPro/BroadcomVTD-Tahoe)
+project (`BroadcomVTD.kext`). OCLP-CustoMac restores the Modern Wireless
+root-patch environment; BroadcomVTD-Tahoe addresses the additional
+kernel-resident Tahoe runtime DMA/IOMMU compatibility problem observed when
+the restored AirPortBrcmNIC stack operates with AppleVTD enabled.
+
 ## Existing amfipassbeta Edition Users
 
 Migration is optional. The amfipassbeta Edition remains available, and `AMFIPass.kext + -amfipassbeta` remains valid.
