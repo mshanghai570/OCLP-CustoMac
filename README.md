@@ -398,6 +398,11 @@ root-patch environment; BroadcomVTD-Tahoe addresses the additional
 kernel-resident Tahoe runtime DMA/IOMMU compatibility problem observed when
 the restored AirPortBrcmNIC stack operates with AppleVTD enabled.
 
+Discussion threads:
+
+- [InsanelyMac](https://www.insanelymac.com/forum/topic/363186-broadcomvtd-tahoe-broadcom-wi-fi-with-applevtd-enabled-on-macos-tahoe/)
+- [TonyMacx86](https://www.tonymacx86.com/threads/broadcomvtd-tahoe-broadcom-wi-fi-with-applevtd-enabled-on-macos-tahoe.333357/)
+
 ## Existing amfipassbeta Edition Users
 
 Migration is optional. The amfipassbeta Edition remains available, and `AMFIPass.kext + -amfipassbeta` remains valid.
