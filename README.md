@@ -217,7 +217,7 @@ With Intel AX210 (`8086:2725`) and an external AirportItlwm EFI, KGP validated t
 
 This is **Gate 1 — PASS**.
 
-Current AirportItlwm does not provide a complete native AWDL control/data path. OCLP-CustoMac therefore does not claim reliable Intel support for bidirectional AirDrop, Personal Hotspot, or Continuity Camera. Those limitations belong to the external runtime driver, not to OCLP-CustoMac's PCI detection or shared Modern Wireless root patch.
+Complete native AWDL/Continuity support is not claimed for Intel. The separately installed AirportItlwm-Tahoe path below adds qualified active awdl0/P2P integration, AirPlay and Screen Mirroring. AirDrop, Personal Hotspot and Continuity Camera remain outside its 1.0.0 scope. Driver capability is distinct from OCLP-CustoMac's PCI detection and shared Modern Wireless root patch.
 
 Normal Screen Mirroring works on the validated Broadcom and Intel paths. Some Hackintosh systems independently reproduce an outgoing Hackintosh-to-Apple-receiver black-screen issue; it is separate from OCLP-CustoMac. [FeatureUnlock-Tahoe](https://github.com/kgp-macPro/FeatureUnlock-Tahoe) is a validated fallback for affected Broadcom setups, while Intel plus [FeatureUnlock-Tahoe](https://github.com/kgp-macPro/FeatureUnlock-Tahoe) remains less reliable and under separate development. Systems with normally working Screen Mirroring do not need [FeatureUnlock-Tahoe](https://github.com/kgp-macPro/FeatureUnlock-Tahoe).
 
@@ -384,7 +384,7 @@ The payload definitions and consumed functional content remain preserved. OCLP-C
 
 ## AppleVTD / IOMMU
 
-The fully validated configuration uses `DisableIoMapper=true`. AppleVTD operation with `DisableIoMapper=false` remains post-release research and is not a release requirement.
+The validated OCLP-CustoMac baseline and guidance for the [current public KGP EFI distribution](https://www.insanelymac.com/forum/files/file/1076-universal-efi-for-all-recent-macos-versions-including-sequoia-and-tahoe/) remain `DisableIoMapper=true`. The separate, optional driver paths below do not change that baseline or imply a mandatory migration.
 
 The pre-publication audit found no grounded localized OCLP-only fix for Broadcom. Intel investigation additionally reaches AirportItlwm's PCI, DMA, and IOMMU behavior. This release does not modify DMAR, the XHC14 Reserved Memory Region, DeviceProperties, ACPI, IOMMU settings, or the user's EFI.
 
@@ -402,6 +402,18 @@ Discussion threads:
 
 - [InsanelyMac](https://www.insanelymac.com/forum/topic/363186-broadcomvtd-tahoe-broadcom-wi-fi-with-applevtd-enabled-on-macos-tahoe/)
 - [TonyMacx86](https://www.tonymacx86.com/threads/broadcomvtd-tahoe-broadcom-wi-fi-with-applevtd-enabled-on-macos-tahoe.333357/)
+
+### Optional AirportItlwm-Tahoe Intel path
+
+[AirportItlwm-Tahoe 1.0.0](https://github.com/kgp-macPro/AirportItlwm-Tahoe) is a separate Intel Wi-Fi driver, physically qualified on AX210 for 1.0.0, for the restored Ventura legacy Modern Wireless environment used with [OCLP-CustoMac](https://github.com/kgp-macPro/OCLP-CustoMac). It offers the qualified Intel path with macOS AppleVTD/system IOMapper available. The AppleVTD configuration used `DisableIoMapper=false` and captured active AppleVTD state; that setting alone does not prove runtime mapper state. `DisableIoMapper=true` does not imply machine-wide absence of IOMMU translation.
+
+The [current public KGP EFI distribution](https://www.insanelymac.com/forum/files/file/1076-universal-efi-for-all-recent-macos-versions-including-sequoia-and-tahoe/) remains unchanged and continues to contain/recommend the established conventional Intel AirportItlwm configuration, including `DisableIoMapper=true` guidance where applicable. AirportItlwm-Tahoe is a separate, optional installation; it is not bundled into that EFI or OCLP-CustoMac. Existing users are not required to migrate.
+
+The two Tahoe 26.6.2 release gates passed on the same binary: AppleVTD and the conventional `DisableIoMapper=true` comparison. Qualified scope includes Wi-Fi/IP traffic, repeated OFF/ON recovery, reconnect, Sleep/Wake on 26.6.2, active awdl0/P2P/AirLink/wifip2pd integration, sampled awdl0 traffic, and bidirectional AirPlay/Screen Mirroring. Retained AppleVTD captures and KGP physical observations are distinguished in the driver’s qualification report. Additional 26.7 AppleVTD testing is scoped compatibility evidence, not another full release gate. This does not establish complete AWDL/Continuity restoration.
+
+**Important scope note:** This kext does **not** claim to restore AirDrop, Continuity Camera, or Personal Hotspot. These features, and Intel BE200 support, remain future development gates. Broader post-1.0.0 development is planned to resume starting in October 2026; this is a development plan, not a promised completion date or feature order.
+
+OCLP-CustoMac restores the framework/root-patch environment; AirportItlwm-Tahoe is the independent driver and does not replace those patches. This cross-reference neither changes this repository’s patcher behavior nor qualifies a different patchset/adapter by association. See the [driver requirements and installation instructions](https://github.com/kgp-macPro/AirportItlwm-Tahoe/blob/main/INSTALL.md).
 
 ## Existing amfipassbeta Edition Users
 
