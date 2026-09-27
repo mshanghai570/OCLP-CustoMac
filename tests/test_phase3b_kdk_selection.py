@@ -138,6 +138,14 @@ class Phase3BKDKSelectionTests(unittest.TestCase):
         self.assertEqual(set(filtered), {"Modern Wireless"})
         self.assertNotIn("Modern Audio", filtered)
 
+    def test_tahoe_audio_payload_does_not_depend_on_host_kext_state(self) -> None:
+        with mock.patch("subprocess.run") as run:
+            run.return_value.stdout = "com.apple.driver.AppleHDA"
+            patches = ModernAudio(25, 0, "25A123", self.constants).patches()
+
+        extensions = patches["Modern Audio"][PatchType.OVERWRITE_SYSTEM_VOLUME]["/System/Library/Extensions"]
+        self.assertEqual(extensions["AppleHDA.kext"], "26.0 Beta 1")
+
     def test_audio_only_retains_audio_kdk_requirement(self) -> None:
         selection = RootPatchSelection.initialize(APPLICABLE).with_selection(
             SelectableRootPatch.MODERN_WIFI,

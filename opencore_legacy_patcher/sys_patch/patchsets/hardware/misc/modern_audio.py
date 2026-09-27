@@ -4,7 +4,7 @@ modern_audio.py: Modern Audio patch set for macOS 26+
 
 from ..base import BaseHardware, HardwareVariant
 from ...base import PatchType
-from .....constants import constants
+from .....constants import Constants
 from .....datasets.os_data import os_data
 
 
@@ -13,9 +13,8 @@ class ModernAudio(BaseHardware):
     Optimized Modern Audio patch class for improved performance on resource-constrained systems
     """
     
-    def __init__(self, xnu_major, xnu_minor, os_build, global_constants: constants.Constants) -> None:
+    def __init__(self, xnu_major, xnu_minor, os_build, global_constants: Constants) -> None:
         super().__init__(xnu_major, xnu_minor, os_build, global_constants)
-        self._apple_hda_cache = None
 
     def name(self) -> str:
         """
@@ -53,46 +52,19 @@ class ModernAudio(BaseHardware):
         """
         return HardwareVariant.MISCELLANEOUS
 
-    def _apple_hda_already_present(self) -> bool:
-        """
-        Optimized check for existing AppleHDA to avoid unnecessary patches
-        """
-        if self._apple_hda_cache is None:
-            self._apple_hda_cache = self._check_apple_hda_presence()
-        return self._apple_hda_cache
-
-    def _check_apple_hda_presence(self) -> bool:
-        """
-        Internal method to check AppleHDA presence
-        """
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["kextstat", "-l"],
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
-            return "AppleHDA" in result.stdout or "AppleALC" in result.stdout
-        except Exception:
-            return False
-
     def _modern_audio_patches(self) -> dict:
         """
-        Optimized patches for Modern Audio with minimal memory footprint
+        Patches for Modern Audio
         """
-        patches = {
+        return {
             "Modern Audio": {
                 PatchType.OVERWRITE_SYSTEM_VOLUME: {
-                    "/System/Library/Extensions": {},
+                    "/System/Library/Extensions": {
+                        "AppleHDA.kext": "26.0 Beta 1",
+                    },
                 },
             },
         }
-        
-        if not self._apple_hda_already_present():
-            patches["Modern Audio"][PatchType.OVERWRITE_SYSTEM_VOLUME]["/System/Library/Extensions"]["AppleHDA.kext"] = "26.0 Beta 1"
-        
-        return patches
 
     def patches(self) -> dict:
         """
