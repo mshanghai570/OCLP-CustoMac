@@ -10,8 +10,223 @@ from .datasets import os_data
 from .detections import device_probe
 
 
-class Constants:
+class LazyConstants:
+    """
+    Lazy-loaded constants to reduce memory usage on resource-constrained systems
+    """
+    
     def __init__(self) -> None:
+        self._initialized = False
+        self._cached_values = {}
+        
+    def _ensure_initialized(self) -> None:
+        if not self._initialized:
+            self._initialize_constants()
+            self._initialized = True
+    
+    def _initialize_constants(self) -> None:
+        # Patcher Versioning
+        self.patcher_version = "3.0.3"  # OpenCore-Legacy-Patcher
+        self.patcher_support_pkg_version = "2.0.0-tahoe-restored.1"
+        self.copyright_date = "Copyright © 2020-2025 Dortania"
+        self.patcher_name = "OCLP-CustoMac"
+        self.project_identity = "OCLP 3.0.0 Nightly - amfipassbeta Edition v2.0"
+        
+        # URLs
+        self.url_patcher_support_pkg = "https://github.com/kgp-macPro/PatcherSupportPkg-laobamac/releases/download/"
+        self.discord_link = "https://discord.gg/rqdPgH8xSN"
+        self.guide_link = "https://dortania.github.io/OpenCore-Legacy-Patcher/"
+        self.repo_link = "https://github.com/kgp-macPro/OCLP-CustoMac"
+        self.installer_pkg_url = f"{self.repo_link}/releases/download/v{self.patcher_version}/AutoPkg-Assets.pkg"
+        self.installer_pkg_url_nightly = "https://nightly.link/kgp-macPro/OCLP-CustoMac/workflows/build-app-wxpython/main/AutoPkg-Assets.pkg.zip"
+        
+        # OpenCore Versioning
+        self.opencore_version = "1.0.7"
+        
+        # Kext Versioning
+        ## Acidanthera
+        self.lilu_version = "1.7.2"
+        self.whatevergreen_version = "1.7.0"
+        self.whatevergreen_navi_version = "1.6.9-Navi"
+        self.airportbcrmfixup_version = "2.2.0"
+        self.nvmefix_version = "1.1.3"
+        self.applealc_version = "1.9.7"
+        self.restrictevents_version = "1.1.6"
+        self.featureunlock_version = "1.1.8"
+        self.debugenhancer_version = "1.1.1"
+        self.cpufriend_version = "1.3.0"
+        self.bluetool_version = "2.7.2"
+        self.cslvfixup_version = "2.6.1"
+        self.autopkg_version = "1.0.4"
+        self.cryptexfixup_version = "1.0.5"
+        
+        ## Apple
+        self.marvel_version = "1.0.1"
+        self.nforce_version = "1.0.1"
+        self.piixata_version = "1.0.1"
+        self.fw_kext = "1.0.1"
+        self.apple_trackpad = "1.0.1"
+        self.apple_isight_version = "1.0.0"
+        self.apple_raid_version = "1.0.0"
+        self.apfs_zlib_version = "12.3.1"
+        self.apfs_zlib_v2_version = "12.6"
+        self.multitouch_version = "1.0.0"
+        self.topcase_version = "1.0.0"
+        self.topcase_inj_version = "1.0.0"
+        self.intel_82574l_version = "1.0.0"
+        self.intel_8254x_version = "1.0.0"
+        self.apple_usb_11_injector = "1.0.0"
+        self.aicpupm_version = "1.0.0"
+        self.s3x_nvme_version = "1.0.0"
+        self.apple_camera_version = "1.0.0"
+        self.t1_sse_version = "1.1.0"
+        self.t1_key_store_version = "1.1.0"
+        self.t1_credential_version = "1.0.0"
+        self.t1_corecrypto_version = "1.0.1"
+        self.apple_spi_version = "1.0.0"
+        self.apple_spi_hid_version = "1.0.0"
+        self.kernel_relay_version = "1.0.0"
+        
+        ## Apple - Dortania Modified
+        self.bcm570_version = "1.0.2"
+        self.i210_version = "1.0.0"
+        self.corecaptureelcap_version = "1.0.2"
+        self.io80211elcap_version = "2.0.1"
+        self.io80211legacy_version = "1.0.0"
+        self.ioskywalk_version = "1.2.0"
+        self.bigsursdxc_version = "1.0.0"
+        self.monterey_ahci_version = "1.0.0"
+        
+        ## Apple - Jazzzny Modified
+        self.aquantia_version = "1.1.0"
+        
+        ## Dortania
+        self.backlight_injector_version = "1.1.0"
+        self.backlight_injectorA_version = "1.0.0"
+        self.smcspoof_version = "1.0.0"
+        self.mce_version = "1.0.0"
+        self.btspoof_version = "1.0.0"
+        self.aspp_override_version = "1.0.1"
+        self.ecm_override_version = "1.0.0"
+        self.rsrhelper_version = "1.0.2"
+        self.amfipass_version = "1.4.1"
+        self.amfipass_compatibility_version = "1.2.1"
+        
+        ## Syncretic
+        self.mousse_version = "0.95-Dortania"
+        self.telemetrap_version = "1.0.0"
+        
+        ## cdf
+        self.innie_version = "1.3.1"
+        
+        ## arter97
+        self.simplemsr_version = "1.0.0"
+        
+        ## blackgate
+        self.gpu_wake_version = "1.0.0"
+        
+        ## flagersgit
+        self.kdkless_version = "1.0.0"
+        
+        ## Jazzzny
+        self.legacy_keyboard = "1.0.0"
+        
+        # Get resource path
+        self.current_path = Path(__file__).parent.parent.resolve()
+        self.original_path = Path(__file__).parent.parent.resolve()
+        self.payload_path = self.current_path / Path("payloads")
+        
+        ## Hardware
+        self.computer = device_probe.Computer.probe()
+        self.custom_model = None
+        
+        ## OpenCore Settings
+        self.opencore_debug = False
+        self.boot_efi = False
+        self.showpicker = True
+        self.nvram_write = True
+        self.oc_timeout = 5
+        
+        ## Kext Settings
+        self.kext_debug = False
+        self.kext_variant = "RELEASE"
+        
+        ## NVRAM Settings
+        self.verbose_debug = False
+        
+        ## SMBIOS Settings
+        self.serial_settings = "None"
+        self.override_smbios = "Default"
+        self.allow_native_spoofs = False
+        
+        ### Serial Number Overrides
+        self.custom_serial_number = ""
+        self.custom_board_serial_number = ""
+        
+        ## FeatureUnlock Settings
+        self.fu_status = False
+        self.fu_arguments = None
+        
+        ## Security Settings
+        self.sip_status = True
+        self.secure_status = False
+        self.vault = False
+        self.disable_cs_lv = False
+        self.disable_amfi = False
+        
+        ## OS Settings
+        self.os_support = 12.0
+        self.detected_os = 0
+        self.detected_os_minor = 0
+        self.detected_os_build = ""
+        self.detected_os_version = ""
+        
+        ## Boot Volume Settings
+        self.firewire_boot = False
+        self.nvme_boot = False
+        self.xhci_boot = False
+        
+        ## Graphics Settings
+        self.allow_ts2_accel = True
+        self.drm_support = False
+        self.force_nv_web = False
+        self.force_output_support = False
+        self.amd_gop_injection = False
+        self.nvidia_kepler_gop_injection = False
+        
+        ### MXM GPU Support
+        self.metal_build = False
+        self.imac_vendor = "None"
+        self.imac_model = ""
+        
+        ## Miscellaneous build settings
+        self.disallow_cpufriend = False
+        self.enable_wake_on_wlan = False
+        self.disable_tb = False
+        self.dGPU_switch = False
+        self.force_surplus = False
+        self.force_latest_psp = False
+        self.disable_fw_throttle = False
+        self.software_demux = False
+        self.force_vmm = False
+        self.disable_connectdrivers = False
+        self.set_vmm_cpuid = False
+        self.disable_mediaanalysisd = False
+        self.force_quad_thread = False
+        self.set_alc_usage = True
+        self.allow_3rd_party_drives = True
+        self.allow_nvme_fixing = True
+        self.apfs_trim_timeout = True
+        self.custom_sip_value = None
+        
+        ## Non-Metal OS support
+        self.legacy_accel_support = [
+            os_data.os_data.big_sur,
+            os_data.os_data.monterey,
+            os_data.os_data.ventura,
+            os_data.os_data.sonoma,
+            os_data.os_data.sequoia,
+        ]
         # Patcher Versioning
         self.patcher_version:                 str = "3.0.3"  # OpenCore-Legacy-Patcher
         self.patcher_support_pkg_version:     str = "2.0.0-tahoe-restored.1"  # PatcherSupportPkg

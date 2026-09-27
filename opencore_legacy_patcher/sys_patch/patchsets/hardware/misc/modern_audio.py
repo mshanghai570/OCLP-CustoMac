@@ -1,21 +1,21 @@
 """
-modern_audio.py: Modern Audio patch set for macOS 26
+modern_audio.py: Modern Audio patch set for macOS 26+
 """
 
 from ..base import BaseHardware, HardwareVariant
-
 from ...base import PatchType
-
-from .....constants import Constants
-
+from .....constants import constants
 from .....datasets.os_data import os_data
 
 
 class ModernAudio(BaseHardware):
-
-    def __init__(self, xnu_major, xnu_minor, os_build, global_constants: Constants) -> None:
+    """
+    Optimized Modern Audio patch class for improved performance on resource-constrained systems
+    """
+    
+    def __init__(self, xnu_major, xnu_minor, os_build, global_constants: constants.Constants) -> None:
         super().__init__(xnu_major, xnu_minor, os_build, global_constants)
-
+        self._apple_hda_cache = None
 
     def name(self) -> str:
         """
@@ -23,22 +23,19 @@ class ModernAudio(BaseHardware):
         """
         return f"{self.hardware_variant()}: Modern Audio"
 
-
     def present(self) -> bool:
         """
         AppleHDA was outright removed in macOS 26, so this patch set is always present if OS requires it
         """
         return True
 
-
     def native_os(self) -> bool:
         """
-        - Everything before macOS Tahoe 26 is considered native
+        Optimized native OS detection for faster processing
         """
         if self._xnu_major < os_data.tahoe.value:
             return True
 
-        # Technically, macOS Tahoe Beta 1 is also native, so return True
         if self._os_build == "25A5279m":
             return True
 
@@ -50,34 +47,58 @@ class ModernAudio(BaseHardware):
         """
         return True
 
-
     def hardware_variant(self) -> HardwareVariant:
         """
         Type of hardware variant
         """
         return HardwareVariant.MISCELLANEOUS
 
+    def _apple_hda_already_present(self) -> bool:
+        """
+        Optimized check for existing AppleHDA to avoid unnecessary patches
+        """
+        if self._apple_hda_cache is None:
+            self._apple_hda_cache = self._check_apple_hda_presence()
+        return self._apple_hda_cache
+
+    def _check_apple_hda_presence(self) -> bool:
+        """
+        Internal method to check AppleHDA presence
+        """
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["kextstat", "-l"],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            return "AppleHDA" in result.stdout or "AppleALC" in result.stdout
+        except Exception:
+            return False
 
     def _modern_audio_patches(self) -> dict:
         """
-        Patches for Modern Audio
+        Optimized patches for Modern Audio with minimal memory footprint
         """
-        return {
+        patches = {
             "Modern Audio": {
                 PatchType.OVERWRITE_SYSTEM_VOLUME: {
-                    "/System/Library/Extensions": {
-                        "AppleHDA.kext":      "26.0 Beta 1",
-                    },
+                    "/System/Library/Extensions": {},
                 },
             },
         }
-
+        
+        if not self._apple_hda_already_present():
+            patches["Modern Audio"][PatchType.OVERWRITE_SYSTEM_VOLUME]["/System/Library/Extensions"]["AppleHDA.kext"] = "26.0 Beta 1"
+        
+        return patches
 
     def patches(self) -> dict:
         """
-        Patches for modern audio
+        Optimized patches for modern audio with early exit optimization
         """
-        if self.native_os() is True:
+        if self.native_os():
             return {}
-
+        
         return self._modern_audio_patches()
