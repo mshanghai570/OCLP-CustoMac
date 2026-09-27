@@ -1100,3 +1100,6 @@ class LazyConstants:
         "Mac-94245AF5819B141B",  # AppleInternal MacBookPro8,3
         "Mac-942B5B3A40C91381",  # AppleInternal iMac12,2
     ]
+
+# Backward compatibility alias
+Constants = LazyConstants
