@@ -10,7 +10,8 @@ jobs:
   build:
     name: Build wxPython
     runs-on: macos-15-intel
-    if: github.repository == 'kgp-macPro/OCLP-CustoMac'
+    # Removed repository restriction to allow forks to build
+    # if: github.repository == 'kgp-macPro/OCLP-CustoMac'
 
     env:
       PYTHONHASHSEED: '0'
