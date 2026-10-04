@@ -10,8 +10,24 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from ..datasets import os_data
 
-BLOCKED_ROOT_PATCH_KDK_DARWIN_MAJORS = frozenset({26})
+
+# `os_data` names Darwin majors, so Tahoe's is `os_data.tahoe` and its marketing
+# number follows `kernel_to_os`. These two numbers used to be spelled out here,
+# in the `--applicationpath` era test and in six log messages, so a fork that
+# moved to another target left the copies behind.
+TAHOE_DARWIN_MAJOR: int = int(os_data.os_data.tahoe)
+TAHOE_MARKETING_MAJOR: int = int(os_data.os_conversion.kernel_to_os(TAHOE_DARWIN_MAJOR))
+
+# The release after the fork's target is the one root patching is blocked on.
+BLOCKED_ROOT_PATCH_KDK_DARWIN_MAJORS: frozenset[int] = frozenset({TAHOE_DARWIN_MAJOR + 1})
+BLOCKED_ROOT_PATCH_KDK_DARWIN_LABEL: str = ", ".join(
+    str(major) for major in sorted(BLOCKED_ROOT_PATCH_KDK_DARWIN_MAJORS)
+)
+BLOCKED_ROOT_PATCH_KDK_MESSAGE: str = (
+    f"Darwin {BLOCKED_ROOT_PATCH_KDK_DARWIN_LABEL} Kernel Debug Kits are prohibited for root patching"
+)
 
 
 def kdk_darwin_major(build: object) -> int | None:
@@ -25,6 +41,11 @@ def kdk_darwin_major(build: object) -> int | None:
     if match is None:
         return None
     return int(match.group(1))
+
+
+def is_blocked_root_patch_kdk(build: object) -> bool:
+    """Whether a build is prohibited, rather than unreadable as a build identity."""
+    return kdk_darwin_major(build) in BLOCKED_ROOT_PATCH_KDK_DARWIN_MAJORS
 
 
 def root_patch_kdk_build_allowed(build: object) -> bool:
@@ -119,9 +140,9 @@ class KernelDebugKitCandidate:
             return False
         build_match = re.match(r"^(\d+)", self.build)
         return (
-            version.major == 26
+            version.major == TAHOE_MARKETING_MAJOR
             and build_match is not None
-            and int(build_match.group(1)) == 25
+            and int(build_match.group(1)) == TAHOE_DARWIN_MAJOR
             and self.allowed_for_root_patching()
         )
 

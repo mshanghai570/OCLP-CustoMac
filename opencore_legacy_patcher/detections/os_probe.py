@@ -6,6 +6,8 @@ import platform
 import plistlib
 import subprocess
 
+from pathlib import Path
+
 
 class OSProbe:
     """
@@ -78,6 +80,7 @@ class OSProbe:
             file_path = f"/System/Volumes/Preboot/Cryptexes/OS{file_path}"
 
         try:
-            return plistlib.load(open(file_path, "rb"))["ProductBuildVersion"]
+            with Path(file_path).open("rb") as version_file:
+                return plistlib.load(version_file)["ProductBuildVersion"]
         except Exception as e:
             raise RuntimeError(f"Failed to detect OS build: {e}")

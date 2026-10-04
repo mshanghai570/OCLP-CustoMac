@@ -68,10 +68,17 @@ from ..support import (
 )
 from ..support.kdk_selection import KDKSelectionMode, KernelDebugKitCandidate
 from .patchsets import (
+    COPY_OPERATIONS,
     HardwarePatchsetDetection,
     HardwarePatchsetSettings,
     PatchType,
-    DynamicPatchset
+    DynamicPatchset,
+    PayloadSourceError,
+    format_missing_sources,
+    is_runtime_sourced,
+    iter_patchset_sources,
+    resolve_source_path,
+    source_entry_path
 )
 from . import (
     sys_patch_helpers,
@@ -198,7 +205,8 @@ class PatchSysVolume:
             return False
 
         try:
-            mounted_data = plistlib.load(open(mounted_system_version, "rb"))
+            with mounted_system_version.open("rb") as version_file:
+                mounted_data = plistlib.load(version_file)
             if mounted_data["ProductBuildVersion"] != self.constants.detected_os_build:
                 logging.error(
                     f"- SystemVersion.plist build version mismatch: found {mounted_data['ProductVersion']} ({mounted_data['ProductBuildVersion']}), expected {self.constants.detected_os_version} ({self.constants.detected_os_build})"
@@ -528,17 +536,20 @@ class PatchSysVolume:
                             remove_file(destination_folder_path, remove_patch_file)
 
 
-            for method_install in [PatchType.OVERWRITE_SYSTEM_VOLUME, PatchType.OVERWRITE_DATA_VOLUME, PatchType.MERGE_SYSTEM_VOLUME, PatchType.MERGE_DATA_VOLUME]:
+            for method_install in COPY_OPERATIONS:
                 if method_install not in required_patches[patch]:
                     continue
 
                 for install_patch_directory in list(required_patches[patch][method_install]):
                     logging.info(f"- Handling Installs in: {install_patch_directory}")
                     for install_file in list(required_patches[patch][method_install][install_patch_directory]):
-                        source_folder_path = required_patches[patch][method_install][install_patch_directory][install_file] + install_patch_directory
-                        # Check whether to source from root
-                        if not required_patches[patch][method_install][install_patch_directory][install_file].startswith("/"):
-                            source_folder_path = source_files_path + "/" + source_folder_path
+                        # Where the source lives, through the same composition the
+                        # preflight validated it with
+                        source_folder_path = str(source_entry_path(
+                            source_files_path,
+                            required_patches[patch][method_install][install_patch_directory][install_file],
+                            install_patch_directory,
+                        ))
 
                         if method_install in [PatchType.OVERWRITE_SYSTEM_VOLUME, PatchType.MERGE_SYSTEM_VOLUME]:
                             destination_folder_path = str(self.mount_location) + install_patch_directory
@@ -560,6 +571,7 @@ class PatchSysVolume:
                             if updated_destination_folder_path not in required_patches[patch][method_install]:
                                 required_patches[patch][method_install].update({updated_destination_folder_path: {}})
                             required_patches[patch][method_install][updated_destination_folder_path].update({install_file: required_patches[patch][method_install][install_patch_directory][install_file]})
+
                             required_patches[patch][method_install][install_patch_directory].pop(install_file)
 
                             destination_folder_path = updated_destination_folder_path
@@ -626,13 +638,13 @@ class PatchSysVolume:
         raise Exception(f"Unknown Dynamic Patchset: {variant}")
 
 
-    def _preflight_checks(self, required_patches: dict, source_files_path: Path) -> dict:
+    def _preflight_checks(self, required_patches: dict, source_files_path: str) -> dict:
         """
         Runs preflight checks before patching
 
         Parameters:
             required_patches (dict): Patchset dictionary (from HardwarePatchsetDetection)
-            source_files_path (Path): Path to the source files (PatcherSupportPkg)
+            source_files_path (str): Path to the source files (PatcherSupportPkg)
 
         Returns:
             dict: Updated patchset dictionary
@@ -640,26 +652,26 @@ class PatchSysVolume:
 
         logging.info("- Running Preflight Checks before patching")
 
+        # Resolve sources computed at runtime before they name a real path
         for patch in required_patches:
-            # Check if all files are present
-            for method_type in [PatchType.OVERWRITE_SYSTEM_VOLUME, PatchType.OVERWRITE_DATA_VOLUME, PatchType.MERGE_SYSTEM_VOLUME, PatchType.MERGE_DATA_VOLUME]:
+            for method_type in COPY_OPERATIONS:
                 if method_type not in required_patches[patch]:
                     continue
                 for install_patch_directory in required_patches[patch][method_type]:
                     for install_file in required_patches[patch][method_type][install_patch_directory]:
-                        try:
-                            if required_patches[patch][method_type][install_patch_directory][install_file] in DynamicPatchset:
-                                required_patches[patch][method_type][install_patch_directory][install_file] = self._resolve_dynamic_patchset(required_patches[patch][method_type][install_patch_directory][install_file])
-                        except TypeError:
-                            pass
+                        source_version = required_patches[patch][method_type][install_patch_directory][install_file]
+                        if is_runtime_sourced(source_version):
+                            required_patches[patch][method_type][install_patch_directory][install_file] = self._resolve_dynamic_patchset(source_version)
 
-                        source_file = required_patches[patch][method_type][install_patch_directory][install_file] + install_patch_directory + "/" + install_file
-
-                        # Check whether to source from root
-                        if not required_patches[patch][method_type][install_patch_directory][install_file].startswith("/"):
-                            source_file = source_files_path + "/" + source_file
-                        if not Path(source_file).exists():
-                            raise Exception(f"Failed to find {source_file}")
+        # Check if all files are present, through the same traversal the build
+        # contract and the GUI validator use
+        missing: list[tuple[str, str]] = []
+        for patch, source_file, from_payload in iter_patchset_sources(required_patches):
+            resolved = resolve_source_path(source_files_path, source_file, from_payload)
+            if not resolved.exists():
+                missing.append((patch, source_file))
+        if missing:
+            raise PayloadSourceError(format_missing_sources(missing))
 
         # Make sure old SkyLight plugins aren't being used
         self._clean_skylight_plugins()

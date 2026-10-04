@@ -25,7 +25,52 @@ from ..volume import (
 
 APPLICATION_SEARCH_PATH:  str = "/Applications"
 
+# createinstallmedia has to be told where the installer bundle is on the macOS
+# 10.12 and earlier era, and 10.13 — High Sierra — dropped the option. The
+# boundary is that release's kernel major, taken from the datasets, rather than a
+# bare 13 that also reads as Ventura's marketing major.
+APPLICATIONPATH_DROPPED_AT: int = int(os_data.os_data.high_sierra)
+
 tmp_dir = tempfile.TemporaryDirectory()
+
+
+def _version_order_key(version: str) -> tuple:
+    """
+    Ordering key for one local installer's version string
+
+    The catalog used to sort these as text, where "9.2.2" lands after "26.0"
+    and "13.7.2" lands before "9.2.2". The numbers are what the installer list
+    is ordered by. A version with no number in it ("Unknown") sorts after the
+    numbered ones, by its text, rather than being dropped.
+    """
+    text = version or ""
+    try:
+        numbers = tuple(int(component) for component in text.split("."))
+    except ValueError:
+        return (1, (), text)
+    return (0, numbers, text)
+
+
+def _requires_applicationpath(platform_version: str) -> bool:
+    """
+    Whether createinstallmedia must be pointed at its own installer bundle
+
+    The previous test indexed `platform_version` as characters after truncating
+    it to its leading component, so it asked whether the first character of "10"
+    was "10" — never true — and the flag was never passed to an installer that
+    needs it.
+    """
+    components = str(platform_version).split(".")
+    if components[0] != "10":
+        return False
+    try:
+        minor = int(components[1])
+    except (IndexError, ValueError):
+        return False
+    # `os_to_kernel` owns the 10.x conversion, so the comparison is between two
+    # kernel majors rather than between a minor and a number that could be read
+    # as a release of its own.
+    return os_data.os_conversion.os_to_kernel(f"10.{minor}") < APPLICATIONPATH_DROPPED_AT
 
 
 class InstallerCreation():
@@ -121,13 +166,11 @@ class InstallerCreation():
 
         plist_path = str(Path(installer_path) / Path("Contents/Info.plist"))
         if Path(plist_path).exists():
-            plist = plistlib.load(Path(plist_path).open("rb"))
+            with Path(plist_path).open("rb") as plist_file:
+                plist = plistlib.load(plist_file)
             if "DTPlatformVersion" in plist:
-                platform_version = plist["DTPlatformVersion"]
-                platform_version = platform_version.split(".")[0]
-                if platform_version[0] == "10":
-                    if int(platform_version[1]) < 13:
-                        additional_args = f" --applicationpath '{installer_path}'"
+                if _requires_applicationpath(plist["DTPlatformVersion"]):
+                    additional_args = f" --applicationpath '{installer_path}'"
 
         if script_location.exists():
             script_location.unlink()
@@ -245,7 +288,8 @@ class LocalInstallerCatalog:
                 continue
 
             try:
-                application_info_plist = plistlib.load((Path(APPLICATION_SEARCH_PATH) / Path(application) / Path("Contents/Info.plist")).open("rb"))
+                with (Path(APPLICATION_SEARCH_PATH) / Path(application) / Path("Contents/Info.plist")).open("rb") as info_plist:
+                    application_info_plist = plistlib.load(info_plist)
             except (PermissionError, TypeError, plistlib.InvalidFileException):
                 continue
 
@@ -302,7 +346,12 @@ class LocalInstallerCatalog:
             })
 
         # Sort Applications by version
-        application_list = {k: v for k, v in sorted(application_list.items(), key=lambda item: item[1]["Version"])}
+        application_list = {
+            k: v for k, v in sorted(
+                application_list.items(),
+                key=lambda item: _version_order_key(item[1]["Version"]),
+            )
+        }
         return application_list
 
 
@@ -352,7 +401,8 @@ class LocalInstallerCatalog:
             for ss_info in ss_info_files:
                 if not Path(tmpdir / ss_info).exists():
                     continue
-                plist = plistlib.load((tmpdir / ss_info).open("rb"))
+                with (tmpdir / ss_info).open("rb") as ss_plist:
+                    plist = plistlib.load(ss_plist)
                 if "Assets" in plist:
                     if "Build" in plist["Assets"][0]:
                         detected_build = plist["Assets"][0]["Build"]

@@ -23,25 +23,34 @@ APPLEDB_API_URL = "https://api.appledb.dev/ios/macOS/main.json"
 class AppleDBProducts:
     """
     Fetch InstallAssistants from AppleDB
+
+    The ceiling decides the n-3 to n window that `latest_products` reports. It
+    sat at Sequoia while the Software Update catalogue and the rest of the
+    patcher moved to Tahoe, so the installer downloader, which builds this with
+    the constants alone, could not offer a macOS 26 installer at all.
     """
 
     def __init__(
         self,
         global_constants: constants.Constants,
-        max_install_assistant_version: os_data = os_data.sequoia,
+        max_install_assistant_version: os_data = os_data.tahoe,
     ) -> None:
         self.constants: constants.Constants = global_constants
 
+        response = None
         try:
-            self.data = (
-                network_handler.NetworkUtilities()
-                .get(APPLEDB_API_URL, headers={"User-Agent": f"OCLP/{self.constants.patcher_version}"})
-                .json()
+            response = network_handler.NetworkUtilities().get(
+                APPLEDB_API_URL,
+                headers={"User-Agent": f"OCLP/{self.constants.patcher_version}"},
             )
+            self.data = response.json()
         except Exception as e:
             self.data = []
             logging.error(f"Failed to fetch AppleDB API response: {e}")
             return
+        finally:
+            if response is not None:
+                response.close()
 
         self.max_ia: os_data = max_install_assistant_version
 
@@ -90,7 +99,11 @@ class AppleDBProducts:
             firmware["raw_version"] = firmware["version"].partition(" ")[0]
 
             xnu_major = int(firmware["build"][:2])
-            beta = firmware.get("beta") or firmware.get("rc")
+            # AppleDB sends `beta` on every release today, but the catalogue must
+            # not depend on that: a missing key made `Beta` None, and the sort
+            # below compares them (`None < None` raises, `None < True` raises).
+            # An RC is a pre-release, so it ranks as a beta either way.
+            beta = bool(firmware.get("beta") or firmware.get("rc"))
 
             details = {
                 # Dates in AppleDB are in Cupertino time. There are no times, so pin to 10 AM

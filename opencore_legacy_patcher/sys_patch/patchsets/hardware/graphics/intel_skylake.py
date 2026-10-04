@@ -71,7 +71,7 @@ class IntelSkylake(BaseHardware):
                         "AppleIntelSKLGraphics.kext":            self._resolve_monterey_framebuffers(),
                         "AppleIntelSKLGraphicsFramebuffer.kext": self._resolve_monterey_framebuffers(),
                         "AppleIntelSKLGraphicsGLDriver.bundle":  "12.5",
-                        **({ "AppleIntelSKLGraphicsMTLDriver.bundle": f"12.5-{self._xnu_major}" }),
+                        **self._metal_driver_patch("AppleIntelSKLGraphicsMTLDriver.bundle"),
                         "AppleIntelSKLGraphicsVADriver.bundle":  "12.5",
                         "AppleIntelSKLGraphicsVAME.bundle":      "12.5",
                         "AppleIntelGraphicsShared.bundle":       "12.5",

@@ -8,7 +8,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from opencore_legacy_patcher.support import kdk_handler
+from opencore_legacy_patcher.datasets.os_data import os_data
+from opencore_legacy_patcher.sucatalog.constants import CatalogVersion
+from opencore_legacy_patcher.support import kdk_handler, kdk_selection
 from opencore_legacy_patcher.support.kdk_selection import (
     KernelDebugKitCandidate,
     kdk_darwin_major,
@@ -48,6 +50,24 @@ class Darwin26KDKResolverPolicyTests(unittest.TestCase):
         self.assertTrue(root_patch_kdk_build_allowed("25G82"))
         self.assertTrue(root_patch_kdk_build_allowed("25G76"))
         self.assertTrue(root_patch_kdk_build_allowed("24G90"))
+
+    def test_the_policy_numbers_are_declared_once(self) -> None:
+        """The Darwin major, the marketing major and the block all derive from the datasets"""
+
+        self.assertEqual(kdk_selection.TAHOE_DARWIN_MAJOR, int(os_data.tahoe))
+        self.assertEqual(kdk_selection.TAHOE_MARKETING_MAJOR, int(CatalogVersion.TAHOE))
+        self.assertEqual(
+            kdk_selection.BLOCKED_ROOT_PATCH_KDK_DARWIN_MAJORS,
+            frozenset({kdk_selection.TAHOE_DARWIN_MAJOR + 1}),
+        )
+        self.assertEqual(kdk_selection.BLOCKED_ROOT_PATCH_KDK_DARWIN_LABEL, "26")
+        self.assertEqual(
+            kdk_selection.BLOCKED_ROOT_PATCH_KDK_MESSAGE,
+            "Darwin 26 Kernel Debug Kits are prohibited for root patching",
+        )
+        self.assertTrue(kdk_selection.is_blocked_root_patch_kdk("26A5368g"))
+        self.assertFalse(kdk_selection.is_blocked_root_patch_kdk("25G82"))
+        self.assertFalse(kdk_selection.is_blocked_root_patch_kdk(None))
 
     def test_marketing_product_version_is_not_a_build_family(self) -> None:
         self.assertIsNone(kdk_darwin_major("26.6.2"))
@@ -104,18 +124,23 @@ class Darwin26KDKResolverPolicyTests(unittest.TestCase):
     def test_locally_installed_darwin_26_kdk_is_not_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            kdk_path = root / "KDK_27.0_26A5368g.kdk"
+            kdk_path = root / "KDK_26.6.2_25G82.kdk"
             plist_path = kdk_path / "System/Library/CoreServices/SystemVersion.plist"
             plist_path.parent.mkdir(parents=True)
             with plist_path.open("wb") as plist_file:
-                plistlib.dump({"ProductVersion": "27.0", "ProductBuildVersion": "26A5368g"}, plist_file)
+                plistlib.dump({"ProductVersion": "26.6.2", "ProductBuildVersion": "25G82"}, plist_file)
             resolver = kdk_handler.KernelDebugKitObject.__new__(kdk_handler.KernelDebugKitObject)
             resolver.ignore_installed = False
             resolver.check_backups_only = False
             resolver.passive = True
-            with mock.patch.object(kdk_handler, "KDK_INSTALL_PATH", str(root)):
-                self.assertIsNone(resolver._local_kdk_installed(match="26A5368g"))
-                self.assertIsNone(resolver.installed_path_for_build("26A5368g"))
+            with mock.patch.object(kdk_handler, "KDK_INSTALL_PATH", str(root)), \
+                 mock.patch.object(kdk_handler.plistlib, "load", wraps=plistlib.load) as plist_load, \
+                 mock.patch.object(kdk_handler.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stdout=b"")):
+                self.assertEqual(resolver._local_kdk_installed(match="25G82"), kdk_path)
+                self.assertEqual(resolver.installed_path_for_build("25G82"), kdk_path)
+
+        self.assertEqual(plist_load.call_count, 2)
+        self.assertTrue(all(call.args[0].closed for call in plist_load.call_args_list))
 
     def test_operation_time_manual_revalidation_rejects_before_support_mount(self) -> None:
         patcher = sys_patch.PatchSysVolume.__new__(sys_patch.PatchSysVolume)
@@ -199,6 +224,25 @@ class Darwin26KDKMergePolicyTests(unittest.TestCase):
                 with self.assertRaisesRegex(Exception, "Darwin 26"):
                     merger.merge()
             install.assert_not_called()
+
+    def test_create_backup_closes_kdk_info_plist(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            backups = root / "backups"
+            backups.mkdir()
+            kdk = root / "KernelDebugKit.pkg"
+            kdk.touch()
+            info_plist = root / "KDK_Info.plist"
+            with info_plist.open("wb") as info_file:
+                plistlib.dump({"version": "26.6.2", "build": "25G82"}, info_file)
+
+            with mock.patch.object(kdk_handler, "KDK_INSTALL_PATH", str(backups)), \
+                 mock.patch.object(kdk_handler.plistlib, "load", wraps=plistlib.load) as plist_load, \
+                 mock.patch.object(kdk_handler.subprocess_wrapper, "run_as_root", return_value=types.SimpleNamespace(returncode=0)):
+                kdk_handler.KernelDebugKitUtilities()._create_backup(kdk, info_plist)
+
+        self.assertEqual(plist_load.call_count, 1)
+        self.assertTrue(plist_load.call_args.args[0].closed)
 
     def test_installed_kdk_identity_is_revalidated_before_merge(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

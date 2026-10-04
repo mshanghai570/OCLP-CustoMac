@@ -24,6 +24,13 @@ from ..support.kdk_selection import KDKSelectionMode, KernelDebugKitIdentity
 from .root_state import KDK_IDENTITY_METADATA_KEY, KDK_SELECTION_MODE_METADATA_KEY
 
 
+# The GPU compiler libraries changed partway through each release: these are the
+# first minors that carry the newer base version, named rather than written into
+# the comparison, and carried next to the release they belong to.
+GPU_COMPILER_BASE_FROM_VENTURA_MINOR: int = 4  # 13.3
+GPU_COMPILER_BASE_FROM_SONOMA_MINOR:  int = 2  # 14.2 Beta 2
+
+
 class SysPatchHelpers:
     """
     Library of helper functions for sys_patch.py and related libraries
@@ -234,12 +241,12 @@ class SysPatchHelpers:
             return
 
         if self.constants.detected_os == os_data.os_data.ventura:
-            if self.constants.detected_os_minor < 4: # 13.3
+            if self.constants.detected_os_minor < GPU_COMPILER_BASE_FROM_VENTURA_MINOR:
                 return
             BASE_VERSION = "31001"
             GPU_VERSION = f"{BASE_VERSION}.669"
         elif self.constants.detected_os == os_data.os_data.sonoma:
-            if self.constants.detected_os_minor < 2: # 14.2 Beta 2
+            if self.constants.detected_os_minor < GPU_COMPILER_BASE_FROM_SONOMA_MINOR:
                 return
             BASE_VERSION = "32023"
             GPU_VERSION = f"{BASE_VERSION}.26"

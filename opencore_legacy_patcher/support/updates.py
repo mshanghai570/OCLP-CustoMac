@@ -6,6 +6,7 @@ Returns dict with Link and Version of the latest binary update if available
 """
 
 import logging
+import requests
 
 from typing import Optional, Union
 from packaging import version
@@ -16,6 +17,37 @@ from .. import constants
 
 
 REPO_LATEST_RELEASE_URL: str = "https://api.github.com/repos/kgp-macPro/OCLP-CustoMac/releases/latest"
+
+CHANGELOG_FALLBACK: str = """## Unable to fetch changelog
+
+Please check the Github page for more information about this release."""
+
+
+def fetch_release_changelog(releases_url: str = REPO_LATEST_RELEASE_URL) -> str:
+    """
+    Return a GitHub release's notes, cut before the asset information section
+
+    The response is released in every path that owns it, including when the
+    body cannot be read.
+
+    Parameters:
+        releases_url (str): Release API endpoint to query
+
+    Returns:
+        str: Release notes, or the fallback text when they are unavailable
+    """
+
+    response = requests.get(releases_url)
+    try:
+        payload = response.json()
+    finally:
+        response.close()
+
+    try:
+        return payload["body"].split("## Asset Information")[0]
+    except:
+        # Anonymous requests are rate limited, and a limited response carries no body
+        return CHANGELOG_FALLBACK
 
 
 class CheckBinaryUpdates:
@@ -94,30 +126,33 @@ class CheckBinaryUpdates:
             return None
 
         response = network_handler.NetworkUtilities().get(REPO_LATEST_RELEASE_URL)
-        data_set = response.json()
-
-        if "tag_name" not in data_set:
-            return None
-
-        # The release marked as latest will always be stable, and thus, have a proper version number
-        # But if not, let's not crash the program
         try:
-            latest_remote_version = version.parse(data_set["tag_name"])
-        except version.InvalidVersion:
+            data_set = response.json()
+
+            if "tag_name" not in data_set:
+                return None
+
+            # The release marked as latest will always be stable, and thus, have a proper version number
+            # But if not, let's not crash the program
+            try:
+                latest_remote_version = version.parse(data_set["tag_name"])
+            except version.InvalidVersion:
+                return None
+
+            if not self._check_if_build_newer(latest_remote_version, self.binary_version):
+                return None
+
+            for asset in data_set["assets"]:
+                logging.info(f"Found asset: {asset['name']}")
+                if asset["name"] == "OpenCore-Patcher.pkg":
+                    self.latest_details = {
+                        "Name": asset["name"],
+                        "Version": latest_remote_version,
+                        "Link": asset["browser_download_url"],
+                        "Github Link": f"{self.constants.repo_link}/releases/tag/{latest_remote_version}",
+                    }
+                    return self.latest_details
+
             return None
-
-        if not self._check_if_build_newer(latest_remote_version, self.binary_version):
-            return None
-
-        for asset in data_set["assets"]:
-            logging.info(f"Found asset: {asset['name']}")
-            if asset["name"] == "OpenCore-Patcher.pkg":
-                self.latest_details = {
-                    "Name": asset["name"],
-                    "Version": latest_remote_version,
-                    "Link": asset["browser_download_url"],
-                    "Github Link": f"{self.constants.repo_link}/releases/tag/{latest_remote_version}",
-                }
-                return self.latest_details
-
-        return None
+        finally:
+            response.close()

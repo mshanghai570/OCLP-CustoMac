@@ -6,7 +6,6 @@ import ast
 import uuid
 import logging
 import binascii
-import plistlib
 import subprocess
 
 from pathlib import Path
@@ -68,7 +67,7 @@ class BuildSMBIOS:
             self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += " -no_compat_check"
 
     def _strip_usb_map(self, map_path, model, spoofed_model, serial_settings):
-        config = plistlib.load(Path(map_path).open("rb"))
+        config = support.load_plist(map_path)
         for entry in list(config["IOKitPersonalities_x86_64"]):
             if not entry.startswith(model):
                 config["IOKitPersonalities_x86_64"].pop(entry)
@@ -84,7 +83,7 @@ class BuildSMBIOS:
                             config["IOKitPersonalities_x86_64"][entry]["IONameMatch"] = "XHC1"
                 except KeyError:
                     continue
-        plistlib.dump(config, Path(map_path).open("wb"), sort_keys=True)
+        support.dump_plist(config, map_path)
 
     def set_smbios(self) -> None:
         """
@@ -167,25 +166,25 @@ class BuildSMBIOS:
         if self.constants.allow_oc_everywhere is False and self.model not in ["iMac7,1", "Xserve2,1", "Dortania1,1"] and self.constants.disallow_cpufriend is False and self.constants.serial_settings != "None":
             # Adjust CPU Friend Data to correct SMBIOS
             new_cpu_ls = Path(self.constants.pp_contents_folder) / Path("Info.plist")
-            cpu_config = plistlib.load(Path(new_cpu_ls).open("rb"))
+            cpu_config = support.load_plist(new_cpu_ls)
             string_stuff = str(cpu_config["IOKitPersonalities"]["CPUFriendDataProvider"]["cf-frequency-data"])
             string_stuff = string_stuff.replace(self.model, self.spoofed_model)
             string_stuff = ast.literal_eval(string_stuff)
             cpu_config["IOKitPersonalities"]["CPUFriendDataProvider"]["cf-frequency-data"] = string_stuff
-            plistlib.dump(cpu_config, Path(new_cpu_ls).open("wb"), sort_keys=True)
+            support.dump_plist(cpu_config, new_cpu_ls)
 
         if self.constants.allow_oc_everywhere is False and self.constants.serial_settings != "None":
             if self.model == "MacBookPro9,1":
                 new_amc_ls = Path(self.constants.amc_contents_folder) / Path("Info.plist")
-                amc_config = plistlib.load(Path(new_amc_ls).open("rb"))
+                amc_config = support.load_plist(new_amc_ls)
                 amc_config["IOKitPersonalities"]["AppleMuxControl"]["ConfigMap"][self.spoofed_board] = amc_config["IOKitPersonalities"]["AppleMuxControl"]["ConfigMap"].pop(self.model)
                 for entry in list(amc_config["IOKitPersonalities"]["AppleMuxControl"]["ConfigMap"]):
                     if not entry.startswith(self.spoofed_board):
                         amc_config["IOKitPersonalities"]["AppleMuxControl"]["ConfigMap"].pop(entry)
-                plistlib.dump(amc_config, Path(new_amc_ls).open("wb"), sort_keys=True)
+                support.dump_plist(amc_config, new_amc_ls)
             if self.model not in model_array.NoAGPMSupport:
                 new_agpm_ls = Path(self.constants.agpm_contents_folder) / Path("Info.plist")
-                agpm_config = plistlib.load(Path(new_agpm_ls).open("rb"))
+                agpm_config = support.load_plist(new_agpm_ls)
                 agpm_config["IOKitPersonalities"]["AGPM"]["Machines"][self.spoofed_board] = agpm_config["IOKitPersonalities"]["AGPM"]["Machines"].pop(self.model)
                 if self.model == "MacBookPro6,2":
                     # Force G State to not exceed moderate state
@@ -199,17 +198,17 @@ class BuildSMBIOS:
                     if not entry.startswith(self.spoofed_board):
                         agpm_config["IOKitPersonalities"]["AGPM"]["Machines"].pop(entry)
 
-                plistlib.dump(agpm_config, Path(new_agpm_ls).open("wb"), sort_keys=True)
+                support.dump_plist(agpm_config, new_agpm_ls)
             if self.model in model_array.AGDPSupport:
                 new_agdp_ls = Path(self.constants.agdp_contents_folder) / Path("Info.plist")
-                agdp_config = plistlib.load(Path(new_agdp_ls).open("rb"))
+                agdp_config = support.load_plist(new_agdp_ls)
                 agdp_config["IOKitPersonalities"]["AppleGraphicsDevicePolicy"]["ConfigMap"][self.spoofed_board] = agdp_config["IOKitPersonalities"]["AppleGraphicsDevicePolicy"]["ConfigMap"].pop(
                     self.model
                 )
                 for entry in list(agdp_config["IOKitPersonalities"]["AppleGraphicsDevicePolicy"]["ConfigMap"]):
                     if not entry.startswith(self.spoofed_board):
                         agdp_config["IOKitPersonalities"]["AppleGraphicsDevicePolicy"]["ConfigMap"].pop(entry)
-                plistlib.dump(agdp_config, Path(new_agdp_ls).open("wb"), sort_keys=True)
+                support.dump_plist(agdp_config, new_agdp_ls)
 
 
     def _minimal_serial_patch(self) -> None:

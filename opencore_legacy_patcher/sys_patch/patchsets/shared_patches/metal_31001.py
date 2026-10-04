@@ -31,6 +31,13 @@ class LegacyMetal31001(BaseSharedPatchSet):
         if self._os_requires_patches() is False:
             return {}
 
+        # RenderBox-<major> is only published for Ventura through Sequoia. No
+        # Tahoe (25) source exists in any pinned PatcherSupportPkg release, so
+        # emitting one would make root-patch preflight fail on a missing source.
+        # Tahoe metallib downgrades are handled by the metallib support package.
+        if self._xnu_major >= os_data.tahoe.value:
+            return {}
+
         return {
             "Metal 31001 Common": {
                 PatchType.OVERWRITE_SYSTEM_VOLUME: {

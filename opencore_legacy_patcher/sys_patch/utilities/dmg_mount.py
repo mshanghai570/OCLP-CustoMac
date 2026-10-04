@@ -3,6 +3,7 @@ dmg_mount.py: PatcherSupportPkg DMG Mounting. Handles Universal-Binaries and Dor
 """
 
 import logging
+import hashlib
 import subprocess
 import applescript
 
@@ -188,6 +189,20 @@ class PatcherSupportPkgMount:
         Returns:
             bool: True if all resources are mounted, False otherwise
         """
+        image_path = Path(self.constants.payload_local_binaries_root_path_dmg)
+        if image_path.is_file():
+            try:
+                digest = hashlib.sha256()
+                with image_path.open("rb") as image:
+                    for chunk in iter(lambda: image.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError as error:
+                logging.error("- Unable to read PatcherSupportPkg image: %s", error)
+                return False
+            if digest.hexdigest() != self.constants.patcher_support_pkg_sha256:
+                logging.error("- PatcherSupportPkg image does not match the pinned release")
+                return False
+
         # If already mounted, skip
         if Path(self.constants.payload_local_binaries_root_path).exists():
             logging.info("- Local PatcherSupportPkg resources available, continuing...")

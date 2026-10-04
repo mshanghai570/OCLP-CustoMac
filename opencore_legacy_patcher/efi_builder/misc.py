@@ -23,6 +23,22 @@ from ..datasets import (
 )
 
 
+def validate_cpu_friend_profile(model: str, global_constants: constants.Constants) -> Path | None:
+    """Validate the CPUFriend profile when this build configuration requires one."""
+    if (
+        global_constants.allow_oc_everywhere is True
+        or model in ["iMac7,1", "Xserve2,1", "Dortania1,1"]
+        or global_constants.disallow_cpufriend is True
+        or global_constants.serial_settings == "None"
+    ):
+        return None
+
+    profile_path = Path(global_constants.platform_plugin_plist_path) / model / "Info.plist"
+    if not profile_path.is_file():
+        raise FileNotFoundError(f"CPUFriend profile for {model} is missing: {profile_path}")
+    return profile_path
+
+
 class BuildMiscellaneous:
     """
     Build Library for Miscellaneous Hardware and Software Support
@@ -163,13 +179,11 @@ xw
         CPUFriend Handler
         """
 
-        if self.constants.allow_oc_everywhere is False and self.model not in ["iMac7,1", "Xserve2,1", "Dortania1,1"] and self.constants.disallow_cpufriend is False and self.constants.serial_settings != "None":
+        pp_map_path = validate_cpu_friend_profile(self.model, self.constants)
+        if pp_map_path is not None:
             support.BuildSupport(self.model, self.constants, self.config).enable_kext("CPUFriend.kext", self.constants.cpufriend_version, self.constants.cpufriend_path)
 
             # CPUFriendDataProvider handling
-            pp_map_path = Path(self.constants.platform_plugin_plist_path) / Path(f"{self.model}/Info.plist")
-            if not pp_map_path.exists():
-                raise Exception(f"{pp_map_path} does not exist!!! Please file an issue stating file is missing for {self.model}.")
             Path(self.constants.pp_kext_folder).mkdir()
             Path(self.constants.pp_contents_folder).mkdir()
             shutil.copy(pp_map_path, self.constants.pp_contents_folder)

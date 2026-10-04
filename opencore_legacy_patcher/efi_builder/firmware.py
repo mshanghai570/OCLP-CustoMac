@@ -219,7 +219,8 @@ class BuildFirmware:
         # APFS check
         # The macOS 26 APFS EFI driver's FileVault 2 implementation is broken, and
         # must be replaced with the macOS 15 APFS EFI driver.
-        logging.info("- Enabling macOS 26 FileVault 2 support")
+        target_release = os_data.os_conversion.kernel_to_os(os_data.os_data.tahoe)
+        logging.info(f"- Enabling macOS {target_release} FileVault 2 support")
         self.config["UEFI"]["APFS"]["EnableJumpstart"] = False
         shutil.copy(self.constants.sequoia_apfs_driver_path, self.constants.drivers_path)
         support.BuildSupport(self.model, self.constants, self.config).get_efi_binary_by_path("apfs_aligned.efi", "UEFI", "Drivers")["Enabled"] = True

@@ -81,7 +81,7 @@ class AMDVega(BaseHardware):
 
                         "AMDRadeonVADriver2.bundle":      "12.5",
                         "AMDRadeonX5000GLDriver.bundle":  "12.5",
-                        **({ "AMDRadeonX5000MTLDriver.bundle": f"12.5-{self._xnu_major}" }),
+                        **self._metal_driver_patch("AMDRadeonX5000MTLDriver.bundle"),
                         "AMDRadeonX5000Shared.bundle":    "12.5",
 
                         "AMDShared.bundle":               "12.5",

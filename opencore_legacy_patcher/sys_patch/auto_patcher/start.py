@@ -7,7 +7,6 @@ import wx.html2
 
 import logging
 import plistlib
-import requests
 import markdown2
 import subprocess
 import webbrowser
@@ -76,14 +75,7 @@ class StartAutomaticPatching:
             ID_GITHUB = wx.NewId()
             ID_UPDATE = wx.NewId()
 
-            url = "https://api.github.com/repos/kgp-macPro/OCLP-CustoMac/releases/latest"
-            response = requests.get(url).json()
-            try:
-                changelog = response["body"].split("## Asset Information")[0]
-            except: #if user constantly checks for updates, github will rate limit them
-                changelog = """## Unable to fetch changelog
-
-Please check the Github page for more information about this release."""
+            changelog = updates.fetch_release_changelog()
 
             html_markdown = markdown2.markdown(changelog, extras=["tables"])
             html_css = css_data.updater_css

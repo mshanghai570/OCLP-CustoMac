@@ -26,13 +26,21 @@ from ..datasets import (
 
 class GenerateDefaults:
 
-    def __init__(self, model: str, host_is_target: bool, global_constants: constants.Constants, ignore_settings_file: bool = False) -> None:
+    def __init__(
+        self,
+        model: str,
+        host_is_target: bool,
+        global_constants: constants.Constants,
+        ignore_settings_file: bool = False,
+        settings_plist_path: str | Path | None = None,
+    ) -> None:
         self.constants: constants.Constants = global_constants
 
         self.model: str = model
 
         self.host_is_target: bool = host_is_target
         self.ignore_settings_file: bool = ignore_settings_file
+        self.settings_plist_path = settings_plist_path
 
         # Reset Variables
         self.constants.sip_status = True
@@ -414,12 +422,13 @@ class GenerateDefaults:
         if self.ignore_settings_file is True:
             return
 
-        settings_plist = global_settings.GlobalEnviromentSettings().global_settings_plist
+        settings_plist = self.settings_plist_path or global_settings.GlobalEnviromentSettings().global_settings_plist
         if not Path(settings_plist).exists():
             return
 
         try:
-            plist = plistlib.load(Path(settings_plist).open("rb"))
+            with Path(settings_plist).open("rb") as settings_file:
+                plist = plistlib.load(settings_file)
         except Exception as e:
             logging.error("Error: Unable to read global settings file")
             logging.error(e)

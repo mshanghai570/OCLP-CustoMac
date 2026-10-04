@@ -10,6 +10,7 @@ from opencore_legacy_patcher import constants
 from opencore_legacy_patcher.support import subprocess_wrapper
 
 from .payload_contract import PayloadContract, PayloadContractError
+from .version_contract import VersionContractError, validate_source
 
 
 
@@ -122,14 +123,15 @@ class GenerateDiskImages:
                         stdout=subprocess.PIPE, stderr=subprocess.PIPE
                     )
                 else:
-                    print(f"- {resource} already exists, skipping download")
+                    self.payload_contract.validate_universal_binaries_dmg(Path(resource))
+                    print(f"- {resource} already exists and passed Tahoe patch resource checks")
                     continue
 
             print(f"- Downloading {resource}...")
 
             subprocess_wrapper.run_and_verify(
                 [
-                    "/usr/bin/curl", "-LO",
+                    "/usr/bin/curl", "--fail", "--location", "--output", resource,
                     f"https://github.com/kgp-macPro/PatcherSupportPkg-laobamac/releases/download/{patcher_support_pkg_version}/{resource}"
                 ],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -138,6 +140,7 @@ class GenerateDiskImages:
             if not Path(f"./{resource}").exists():
                 print(f"- {resource} not found")
                 raise Exception(f"{resource} not found")
+            self.payload_contract.validate_universal_binaries_dmg(Path(resource))
 
 
     def generate(self) -> None:
@@ -145,6 +148,9 @@ class GenerateDiskImages:
         Generate disk images
         """
 
+        # Source first: this method deletes from the working tree and writes new
+        # images, so a release-number defect stops the build before either.
+        validate_source()
         self._delete_extra_binaries()
         self._generate_payloads_dmg()
         self._download_resources()

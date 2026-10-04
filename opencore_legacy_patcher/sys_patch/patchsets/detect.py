@@ -22,6 +22,8 @@ from .hardware.graphics import (
     intel_broadwell,
     intel_skylake,
 
+    amd_navi,
+
     nvidia_tesla,
     nvidia_kepler,
     nvidia_webdriver,
@@ -51,7 +53,7 @@ from .hardware.misc import (
 from ... import constants
 
 from ...datasets import sip_data
-from ...datasets.os_data import os_data
+from ...datasets.os_data import SUPPORTED_MAJOR_VERSIONS, os_data
 from ...support import (
     network_handler,
     utilities,
@@ -115,38 +117,7 @@ class HardwarePatchsetDetection:
         self._check_kdk_status = check_kdk_status
         self._quiet_kdk_status = quiet_kdk_status
 
-        self._hardware_variants = [
-            #intel_iron_lake.IntelIronLake,
-            #intel_sandy_bridge.IntelSandyBridge,
-            #intel_ivy_bridge.IntelIvyBridge,
-            #intel_haswell.IntelHaswell,
-            #intel_broadwell.IntelBroadwell,
-            #intel_skylake.IntelSkylake,
-
-            #nvidia_tesla.NvidiaTesla,
-            #nvidia_kepler.NvidiaKepler,
-            #nvidia_webdriver.NvidiaWebDriver,
-
-            #amd_terascale_1.AMDTeraScale1,
-            #amd_terascale_2.AMDTeraScale2,
-            #amd_legacy_gcn.AMDLegacyGCN,
-            #amd_polaris.AMDPolaris,
-            #amd_vega.AMDVega,
-
-            #legacy_wireless.LegacyWireless,
-            modern_wireless.ModernWireless,
-
-            #legacy_audio.LegacyAudio,
-            modern_audio.ModernAudio,
-
-            #display_backlight.DisplayBacklight,
-            #gmux.GraphicsMultiplexer,
-            #keyboard_backlight.KeyboardBacklight,
-            #pcie_webcam.PCIeFaceTimeCamera,
-            #t1_security.T1SecurityChip,
-            #usb11.USB11Controller,
-            #cpu_missing_avx.CPUMissingAVX,
-        ]
+        self._hardware_variants = self.hardware_variants()
 
         self.device_properties = None
         self.patches           = None
@@ -158,12 +129,72 @@ class HardwarePatchsetDetection:
         self._detect()
 
 
+    @staticmethod
+    def all_hardware_variants() -> list[type[BaseHardware]]:
+        """Every hardware family present in source, dormant families included.
+
+        Listing a family here does not register it: only :meth:`hardware_variants`
+        decides what runs. Tooling uses this to reason about families that are
+        not registered, for example the Tahoe payload oracle in ``ci_tooling``,
+        and a family stays out of the enabled list while the pinned
+        PatcherSupportPkg release does not publish every Tahoe resource its
+        patches reference.
+        """
+        return [
+            intel_iron_lake.IntelIronLake,
+            intel_sandy_bridge.IntelSandyBridge,
+            intel_ivy_bridge.IntelIvyBridge,
+            intel_haswell.IntelHaswell,
+            intel_broadwell.IntelBroadwell,
+            intel_skylake.IntelSkylake,
+
+            nvidia_tesla.NvidiaTesla,
+            nvidia_kepler.NvidiaKepler,
+            nvidia_webdriver.NvidiaWebDriver,
+
+            amd_terascale_1.AMDTeraScale1,
+            amd_terascale_2.AMDTeraScale2,
+            amd_legacy_gcn.AMDLegacyGCN,
+            amd_polaris.AMDPolaris,
+            amd_vega.AMDVega,
+            amd_navi.AMDNavi,
+
+            legacy_wireless.LegacyWireless,
+            modern_wireless.ModernWireless,
+
+            legacy_audio.LegacyAudio,
+            modern_audio.ModernAudio,
+
+            display_backlight.DisplayBacklight,
+            gmux.GraphicsMultiplexer,
+            keyboard_backlight.KeyboardBacklight,
+            pcie_webcam.PCIeFaceTimeCamera,
+            t1_security.T1SecurityChip,
+            usb11.USB11Controller,
+            cpu_missing_avx.CPUMissingAVX,
+        ]
+
+    @staticmethod
+    def hardware_variants() -> list[type[BaseHardware]]:
+        """Hardware families enabled for root-patch detection.
+
+        Adding a family here requires the pinned PatcherSupportPkg release to
+        publish every Tahoe resource its patches reference; the build payload
+        contract fails the package build otherwise.
+        """
+        return [
+            modern_wireless.ModernWireless,
+            modern_audio.ModernAudio,
+        ]
+
     def _validation_check_unsupported_host_os(self) -> bool:
         """
         Determine if host OS is unsupported
         """
-        _min_os = os_data.big_sur.value
-        _max_os = os_data.tahoe.value
+        # Bounded by the same declaration `--validate` walks, so the two cannot
+        # disagree about which releases are supported.
+        _min_os = min(SUPPORTED_MAJOR_VERSIONS)
+        _max_os = max(SUPPORTED_MAJOR_VERSIONS)
         if self._dortania_internal_check() is True:
             return False
         if self._xnu_major < _min_os or self._xnu_major > _max_os:

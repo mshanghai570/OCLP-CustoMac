@@ -5,11 +5,12 @@ commit_info.py: Parse Commit Info from binary's info.plist
 import plistlib
 
 from pathlib import Path
+from typing import Callable
 
 
 class ParseCommitInfo:
 
-    def __init__(self, binary_path: str) -> None:
+    def __init__(self, binary_path: str, plist_loader: Callable[[Path], dict] | None = None) -> None:
         """
         Parameters:
             binary_path (str): Path to binary
@@ -17,6 +18,13 @@ class ParseCommitInfo:
 
         self.binary_path = str(binary_path)
         self.plist_path = self._convert_binary_path_to_plist_path()
+        self._plist_loader = plist_loader or self._load_plist
+
+
+    @staticmethod
+    def _load_plist(path: Path) -> dict:
+        with path.open("rb") as plist_file:
+            return plistlib.load(plist_file)
 
 
     def _convert_binary_path_to_plist_path(self) -> str:
@@ -40,7 +48,7 @@ class ParseCommitInfo:
         """
 
         if self.plist_path:
-            plist_info = plistlib.load(Path(self.plist_path).open("rb"))
+            plist_info = self._plist_loader(Path(self.plist_path))
             if "Github" in plist_info:
                 return (
                     plist_info["Github"]["Branch"],

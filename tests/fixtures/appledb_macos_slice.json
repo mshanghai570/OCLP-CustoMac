@@ -1,0 +1,329 @@
+[
+  {
+    "beta": false,
+    "build": "21H1123",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "released": "2024-03-07",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/46/57/052-60131-A_KM2RH04C2D/9yzvba1uvpem2wuo95r459qno57qaizwf2/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "12.7.4"
+  },
+  {
+    "beta": false,
+    "build": "21H1320",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "released": "2024-07-29",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/24/16/062-40406-A_LQ4WW26M04/j7bl9ygay5prezturwh72ai10fvseh2uhw/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "12.7.6"
+  },
+  {
+    "beta": true,
+    "build": "21H1320",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "rc": true,
+    "released": "2024-07-23",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/24/16/062-40406-A_LQ4WW26M04/j7bl9ygay5prezturwh72ai10fvseh2uhw/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "12.7.6 RC 5"
+  },
+  {
+    "beta": false,
+    "build": "22H730",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "released": "2025-08-20",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/09/46/093-22004-A_QNZEDC334I/phigx2zvoggml6sh79my4y51fnvgy8hix4/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "13.7.8"
+  },
+  {
+    "beta": true,
+    "build": "22H717",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "rc": true,
+    "released": "2025-07-14",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/59/62/082-71882-A_DFIKNAPRYJ/aeh60eev0lkvxurw52mopx5k7jzmewmrud/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "13.7.7 RC 3"
+  },
+  {
+    "beta": false,
+    "build": "23J620",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "released": "2026-07-27",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/40/12/140-75436-A_GB8UWVHS9N/5xfegq6xrfx5iewmc26aruzvv4ykpubijg/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "14.8.8"
+  },
+  {
+    "beta": false,
+    "build": "23J631",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "released": "2026-08-06",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/13/30/140-88558-A_TN3FIE7J63/p61cqj3ktmcqilz3q64ls4ekp1os9c8qbp/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "14.8.9"
+  },
+  {
+    "beta": true,
+    "build": "23J620",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "rc": true,
+    "released": "2026-07-24",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/40/12/140-75436-A_GB8UWVHS9N/5xfegq6xrfx5iewmc26aruzvv4ykpubijg/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "14.8.8 RC 7"
+  },
+  {
+    "beta": false,
+    "build": "24H23",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "released": "2026-09-14",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/24/14/142-16660-A_CTI1XX4VYC/dwxnuxoud4401qcf8to49p8iq1ij987j1e/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "15.8"
+  },
+  {
+    "beta": false,
+    "build": "24H32",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "released": "2026-09-28",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/07/04/142-27431-A_VX0FXASAKC/m7trj81qnvp94e9nzr06e7qi9lqey7cwmu/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "15.8.1"
+  },
+  {
+    "beta": true,
+    "build": "24H212",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "rc": true,
+    "released": "2026-09-21",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/09/36/142-24284-A_F1KIOHFRM9/ix3hozvaidjeq1b2k42iubg0m81rpzei1p/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "15.8.1 RC 2"
+  },
+  {
+    "beta": false,
+    "build": "25G229",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "released": "2026-09-14",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/52/44/142-16670-A_C1NGFF0VNT/e1mno92ap4g9s6epq5bbee9a57b5tm983g/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "26.7"
+  },
+  {
+    "beta": false,
+    "build": "25G241",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "released": "2026-09-28",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/51/17/142-28081-A_616Q67X32N/5atqz1miz61kmrim7fwkn7yi62xuzzcc0s/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "26.7.1"
+  },
+  {
+    "beta": true,
+    "build": "25G313",
+    "deviceMap": [
+      "MacPro7,1"
+    ],
+    "rc": true,
+    "released": "2026-09-21",
+    "sources": [
+      {
+        "deviceMap": [
+          "MacPro7,1"
+        ],
+        "links": [
+          {
+            "active": true,
+            "url": "https://swcdn.apple.com/content/downloads/56/16/142-24276-A_G86NQ47LFL/sodt9fu3tr0ab71uh8o8i8rtu9wv8zvfwo/InstallAssistant.pkg"
+          }
+        ],
+        "type": "installassistant"
+      }
+    ],
+    "version": "26.7.1 RC 2"
+  }
+]

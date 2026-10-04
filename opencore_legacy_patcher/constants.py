@@ -15,6 +15,7 @@ class Constants:
         # Patcher Versioning
         self.patcher_version:                 str = "3.0.3"  # OpenCore-Legacy-Patcher
         self.patcher_support_pkg_version:     str = "2.0.0-tahoe-restored.1"  # PatcherSupportPkg
+        self.patcher_support_pkg_sha256:      str = "3659ae0ebadc1062252bbeeb7fe75dce292b5b9d599681c6dfa3dc4430bbc6a4"
         self.copyright_date:                  str = "Copyright © 2020-2025 Dortania"
         self.patcher_name:                    str = "OCLP-CustoMac"
         self.project_identity:                str = "OCLP 3.0.0 Nightly - amfipassbeta Edition v2.0"

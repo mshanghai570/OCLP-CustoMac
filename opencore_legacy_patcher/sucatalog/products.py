@@ -17,6 +17,43 @@ from .constants import CatalogVersion, SeedType
 from ..support import network_handler
 
 
+_ZERO_VERSION = packaging.version.Version("0.0.0")
+
+
+def _parse_numeric_version(value: str | None) -> packaging.version.Version | None:
+    """
+    Parse a version string, returning None when there is no number to order
+
+    `CatalogVersion` carries the pre-release names ("mountainlion") and an empty
+    Tiger entry, and a catalog can hand back a product with no version at all.
+    Callers read None as "cannot be compared" rather than as zero, so a value
+    that is not a number is never silently sorted below a real release.
+    """
+    if not value:
+        return None
+    try:
+        return packaging.version.parse(value)
+    except packaging.version.InvalidVersion:
+        return None
+
+
+def _version_sort_key(installer: dict) -> tuple:
+    """Ordering key for one installer: its parsed version, then its text form"""
+    version = _parse_numeric_version(installer.get("Version"))
+    return (version if version is not None else _ZERO_VERSION, installer.get("Version") or "")
+
+
+def _sort_products(products: list) -> list:
+    """
+    Order installers by version, numerically
+
+    Ordering the raw version string only agrees with numeric order while every
+    release major has the same number of digits: as text, "9.2.2" sorts after
+    "26.0" instead of before it.
+    """
+    return sorted(products, key=_version_sort_key)
+
+
 class CatalogProducts:
     """
     Args:
@@ -264,10 +301,25 @@ class CatalogProducts:
         products_copy = list(version_map.values())
 
         # Remove EOL versions (older than n-3)
-        for installer in products:
-            if installer["Version"].split(".")[0] < supported_versions[-4].value:
-                if installer in products_copy:
-                    products_copy.pop(products_copy.index(installer))
+        #
+        # Compared numerically, because a version component is a number: the
+        # classic Mac OS entry "9.2.2" is older than the "13" floor yet sorts
+        # after it as text. Splitting the leading component off and comparing
+        # strings was wrong in the other direction too, as it collapsed every
+        # 10.x release to "10", a *prefix* of a two-component floor such as
+        # "10.12" and therefore older than the very release we meant to keep.
+        #
+        # The floor is the oldest version in the window, which is the first entry
+        # of the inverted list above rather than a hardcoded 4-wide offset.
+        eol_floor = _parse_numeric_version(supported_versions[0].value)
+        if eol_floor is not None:
+            for installer in products:
+                installer_version = _parse_numeric_version(installer["Version"])
+                if installer_version is None:
+                    continue
+                if installer_version < eol_floor:
+                    if installer in products_copy:
+                        products_copy.pop(products_copy.index(installer))
 
         return products_copy
 
@@ -336,11 +388,13 @@ class CatalogProducts:
                         if net_obj is None:
                             continue
 
-                        contents = net_obj.content
                         try:
+                            contents = net_obj.content
                             plist_contents = plistlib.loads(contents)
                         except plistlib.InvalidFileException:
                             continue
+                        finally:
+                            net_obj.close()
 
                         if plist_contents:
                             if Path(package["URL"]).name == "Info.plist":
@@ -376,7 +430,10 @@ class CatalogProducts:
                 if net_obj is None:
                     continue
 
-                contents = net_obj.content
+                try:
+                    contents = net_obj.content
+                finally:
+                    net_obj.close()
 
                 _product_map.update(self._parse_english_distributions(contents))
 
@@ -388,12 +445,14 @@ class CatalogProducts:
                         if net_obj is None:
                             continue
 
-                        server_metadata_contents = net_obj.content
-
                         try:
-                            server_metadata_plist = plistlib.loads(server_metadata_contents)
-                        except plistlib.InvalidFileException:
-                            pass
+                            server_metadata_contents = net_obj.content
+                            try:
+                                server_metadata_plist = plistlib.loads(server_metadata_contents)
+                            except plistlib.InvalidFileException:
+                                pass
+                        finally:
+                            net_obj.close()
 
                         if "CFBundleShortVersionString" in server_metadata_plist:
                             _product_map["Version"] = server_metadata_plist["CFBundleShortVersionString"]
@@ -422,7 +481,7 @@ class CatalogProducts:
 
             _products.append(_product_map)
 
-        _products = sorted(_products, key=lambda x: x["Version"])
+        _products = _sort_products(_products)
 
         return _products
 

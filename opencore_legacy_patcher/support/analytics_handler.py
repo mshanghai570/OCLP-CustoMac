@@ -17,6 +17,7 @@ from . import (
 
 
 DATE_FORMAT:      str = "%Y-%m-%d %H-%M-%S"
+GLOBAL_PREFERENCES_PLIST: Path = Path("/Library/Preferences/.GlobalPreferences.plist")
 ANALYTICS_SERVER: str = ""
 SITE_KEY:         str = ""
 CRASH_URL:        str = ANALYTICS_SERVER + "/crash"
@@ -90,17 +91,19 @@ class Analytics:
             "CRASH_LOG":           log_file.read_text()
         }
 
-        network_handler.NetworkUtilities().post(CRASH_URL, json = crash_data)
+        response = network_handler.NetworkUtilities().post(CRASH_URL, json = crash_data)
+        response.close()
 
 
     def _get_country(self) -> str:
         # Get approximate country from .GlobalPreferences.plist
-        path = "/Library/Preferences/.GlobalPreferences.plist"
-        if not Path(path).exists():
+        path = GLOBAL_PREFERENCES_PLIST
+        if not path.exists():
             return "US"
 
         try:
-            result = plistlib.load(Path(path).open("rb"))
+            with path.open("rb") as preferences_file:
+                result = plistlib.load(preferences_file)
         except:
             return "US"
 
@@ -142,6 +145,7 @@ class Analytics:
             return
         if SITE_KEY == "":
             return
-        network_handler.NetworkUtilities().post(ANALYTICS_SERVER, json = self.data)
+        response = network_handler.NetworkUtilities().post(ANALYTICS_SERVER, json = self.data)
+        response.close()
 
 

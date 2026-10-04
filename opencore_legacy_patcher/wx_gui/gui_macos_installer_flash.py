@@ -454,7 +454,8 @@ class macOSInstallerFlashFrame(wx.Frame):
         if not Path(path + "/System/Library/CoreServices/SystemVersion.plist").exists():
             return
 
-        os_version = plistlib.load(Path(path + "/System/Library/CoreServices/SystemVersion.plist").open("rb"))
+        with Path(path + "/System/Library/CoreServices/SystemVersion.plist").open("rb") as version_file:
+            os_version = plistlib.load(version_file)
         kernel_version = os_data.os_conversion.os_to_kernel(os_version["ProductVersion"])
         if int(kernel_version) < os_data.os_data.big_sur:
             logging.info("Installer unsupported, requires Big Sur or newer")

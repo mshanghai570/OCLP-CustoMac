@@ -7,7 +7,6 @@ import pickle
 import shutil
 import logging
 import zipfile
-import plistlib
 
 from pathlib import Path
 from datetime import date
@@ -59,6 +58,9 @@ class BuildOpenCore:
 
         utilities.cls()
         logging.info(f"Building Configuration {'for external' if self.constants.custom_model else 'on model'}: {self.model}")
+
+        # Refuse a missing CPUFriend source before creating or cleaning the build tree.
+        misc.validate_cpu_friend_profile(self.model, self.constants)
 
         self._generate_base()
         self._set_revision()
@@ -137,7 +139,7 @@ class BuildOpenCore:
         # Setup config.plist for editing
         logging.info("- Adding config.plist for OpenCore")
         shutil.copy(self.constants.plist_template, self.constants.oc_folder)
-        self.config = plistlib.load(Path(self.constants.plist_path).open("rb"))
+        self.config = support.load_plist(self.constants.plist_path)
 
 
     def _set_revision(self) -> None:
@@ -164,7 +166,7 @@ class BuildOpenCore:
         Save config.plist to disk
         """
 
-        plistlib.dump(self.config, Path(self.constants.plist_path).open("wb"), sort_keys=True)
+        support.dump_plist(self.config, self.constants.plist_path)
 
 
     def _build_opencore(self) -> None:

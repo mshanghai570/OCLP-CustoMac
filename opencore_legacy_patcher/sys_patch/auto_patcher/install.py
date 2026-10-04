@@ -28,6 +28,16 @@ class InstallAutomaticPatchingServices:
         self.constants: constants.Constants = global_constants
 
 
+    @staticmethod
+    def _file_sha256(path: str | Path) -> str:
+        """Hash a service file without retaining its data or file handle."""
+        digest = hashlib.sha256()
+        with open(path, "rb") as service_file:
+            for chunk in iter(lambda: service_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+
     def install_auto_patcher_launch_agent(self, kdk_caching_needed: bool = False):
         """
         Install patcher launch services
@@ -50,7 +60,7 @@ class InstallAutomaticPatchingServices:
             name = Path(service).name
             logging.info(f"- Installing {name}")
             if Path(services[service]).exists():
-                if hashlib.sha256(open(service, "rb").read()).hexdigest() == hashlib.sha256(open(services[service], "rb").read()).hexdigest():
+                if self._file_sha256(service) == self._file_sha256(services[service]):
                     logging.info(f"  - {name} checksums match, skipping")
                     continue
                 logging.info(f"  - Existing service found, removing")
@@ -85,7 +95,8 @@ class InstallAutomaticPatchingServices:
                 logging.info(f"  - Failed to check if {kext.name} is a directory: {e}")
                 continue
             try:
-                kext_plist = plistlib.load(open(f"{kext}/Contents/Info.plist", "rb"))
+                with Path(f"{kext}/Contents/Info.plist").open("rb") as kext_info:
+                    kext_plist = plistlib.load(kext_info)
             except Exception as e:
                 logging.info(f"  - Failed to load plist for {kext.name}: {e}")
                 continue
@@ -100,7 +111,8 @@ class InstallAutomaticPatchingServices:
             return False
 
         # Load the RSRMonitor plist
-        rsr_monitor_plist = plistlib.load(open(self.constants.rsr_monitor_launch_daemon_path, "rb"))
+        with Path(self.constants.rsr_monitor_launch_daemon_path).open("rb") as rsr_monitor_file:
+            rsr_monitor_plist = plistlib.load(rsr_monitor_file)
 
         arguments = ["/bin/rm", "-Rfv"]
         arguments += [f"/Library/Extensions/{kext}" for kext in kexts]
@@ -115,6 +127,7 @@ class InstallAutomaticPatchingServices:
         ]
 
         # Write the RSRMonitor plist
-        plistlib.dump(rsr_monitor_plist, Path(self.constants.rsr_monitor_launch_daemon_path).open("wb"))
+        with Path(self.constants.rsr_monitor_launch_daemon_path).open("wb") as rsr_monitor_file:
+            plistlib.dump(rsr_monitor_plist, rsr_monitor_file)
 
         return True

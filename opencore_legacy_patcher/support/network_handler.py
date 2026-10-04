@@ -52,8 +52,9 @@ class NetworkUtilities:
             bool: True if network is available, False otherwise
         """
 
+        response = None
         try:
-            requests.head(self.url, timeout=5, allow_redirects=True)
+            response = requests.head(self.url, timeout=5, allow_redirects=True)
             return True
         except (
             requests.exceptions.Timeout,
@@ -62,6 +63,9 @@ class NetworkUtilities:
             requests.exceptions.HTTPError
         ):
             return False
+        finally:
+            if response is not None:
+                response.close()
 
     def validate_link(self) -> bool:
         """
@@ -70,6 +74,7 @@ class NetworkUtilities:
         Returns:
             bool: True if link is valid, False otherwise
         """
+        response = None
         try:
             response = SESSION.head(self.url, timeout=5, allow_redirects=True)
             response.raise_for_status()
@@ -81,6 +86,9 @@ class NetworkUtilities:
             requests.exceptions.HTTPError
         ):
             return False
+        finally:
+            if response is not None:
+                response.close()
 
 
     def get(self, url: str, **kwargs) -> requests.Response:
@@ -257,6 +265,7 @@ class DownloadObject:
         If unable to get file size, set to zero
         """
 
+        result = None
         try:
             result = SESSION.head(self.url, allow_redirects=True, timeout=5)
             if 'Content-Length' in result.headers:
@@ -267,6 +276,9 @@ class DownloadObject:
             logging.error(f"Error determining file size {self.url}: {str(e)}")
             logging.error("Assuming file size is 0")
             self.total_file_size = 0.0
+        finally:
+            if result is not None:
+                result.close()
 
 
     def _update_checksum(self, chunk: bytes) -> None:
@@ -330,6 +342,9 @@ class DownloadObject:
 
         utilities.disable_sleep_while_running()
 
+        response = None
+        destination_open_attempted = False
+        download_succeeded = False
         try:
             if not self.has_network:
                 raise Exception("No network connection")
@@ -339,37 +354,48 @@ class DownloadObject:
 
             response = NetworkUtilities().get(self.url, stream=True, timeout=10)
 
-            with open(self.filepath, 'wb') as file:
-                atexit.register(self.stop)
-                for i, chunk in enumerate(response.iter_content(1024 * 1024 * 4)):
-                    if self.should_stop:
-                        raise Exception("Download stopped")
-                    if chunk:
-                        file.write(chunk)
-                        self.downloaded_file_size += len(chunk)
-                        if self._checksum_storage:
-                            self._update_checksum(chunk)
-                        if display_progress and i % 100:
-                            # Don't use logging here, as we'll be spamming the log file
-                            if self.total_file_size == 0.0:
-                                print(f"Downloaded {utilities.human_fmt(self.downloaded_file_size)} of {self.filename}")
-                            else:
-                                print(f"Downloaded {self.get_percent():.2f}% of {self.filename} ({utilities.human_fmt(self.get_speed())}/s) ({self.get_time_remaining():.2f} seconds remaining)")
-                self.download_complete = True
-                logging.info(f"Download complete: {self.filename}")
-                logging.info("Stats:")
-                logging.info(f"- Downloaded size: {utilities.human_fmt(self.downloaded_file_size)}")
-                logging.info(f"- Time elapsed: {(time.time() - self.start_time):.2f} seconds")
-                logging.info(f"- Speed: {utilities.human_fmt(self.downloaded_file_size / (time.time() - self.start_time))}/s")
-                logging.info(f"- Location: {self.filepath}")
-                if self._checksum_storage:
-                    self.checksum = self._checksum_storage.hexdigest()
-                    logging.info(f"Checksum: {self.checksum}")
+            try:
+                destination_open_attempted = True
+                with open(self.filepath, 'wb') as file:
+                    atexit.register(self.stop)
+                    for i, chunk in enumerate(response.iter_content(1024 * 1024 * 4)):
+                        if self.should_stop:
+                            raise Exception("Download stopped")
+                        if chunk:
+                            file.write(chunk)
+                            self.downloaded_file_size += len(chunk)
+                            if self._checksum_storage:
+                                self._update_checksum(chunk)
+                            if display_progress and i % 100:
+                                # Don't use logging here, as we'll be spamming the log file
+                                if self.total_file_size == 0.0:
+                                    print(f"Downloaded {utilities.human_fmt(self.downloaded_file_size)} of {self.filename}")
+                                else:
+                                    print(f"Downloaded {self.get_percent():.2f}% of {self.filename} ({utilities.human_fmt(self.get_speed())}/s) ({self.get_time_remaining():.2f} seconds remaining)")
+                    self.download_complete = True
+                    download_succeeded = True
+                    logging.info(f"Download complete: {self.filename}")
+                    logging.info("Stats:")
+                    logging.info(f"- Downloaded size: {utilities.human_fmt(self.downloaded_file_size)}")
+                    logging.info(f"- Time elapsed: {(time.time() - self.start_time):.2f} seconds")
+                    logging.info(f"- Speed: {utilities.human_fmt(self.downloaded_file_size / (time.time() - self.start_time))}/s")
+                    logging.info(f"- Location: {self.filepath}")
+                    if self._checksum_storage:
+                        self.checksum = self._checksum_storage.hexdigest()
+                        logging.info(f"Checksum: {self.checksum}")
+            finally:
+                response.close()
         except Exception as e:
             self.error = True
             self.error_msg = str(e)
             self.status = DownloadStatus.ERROR
             logging.error(f"Error downloading {self.url}: {self.error_msg}")
+        finally:
+            if destination_open_attempted and not download_succeeded:
+                try:
+                    self.filepath.unlink(missing_ok=True)
+                except OSError as cleanup_error:
+                    logging.warning(f"Unable to remove incomplete download {self.filepath}: {cleanup_error}")
 
         self.status = DownloadStatus.COMPLETE
         utilities.enable_sleep_after_running()

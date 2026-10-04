@@ -165,7 +165,8 @@ class GenerateApplication:
             raise RuntimeError("Source build metadata was not validated")
 
         print("Embedding git data")
-        _plist = plistlib.load(_file.open("rb"))
+        with _file.open("rb") as plist_file:
+            _plist = plistlib.load(plist_file)
         _plist["Github"] = {
             "Branch": self._source_metadata.ref,
             "Commit SHA": self._source_metadata.commit_sha,
@@ -175,7 +176,8 @@ class GenerateApplication:
             "Project": "OCLP 3.0.0 Nightly - amfipassbeta Edition v2.0",
             "Version": _plist["CFBundleShortVersionString"],
         }
-        plistlib.dump(_plist, _file.open("wb"), sort_keys=True)
+        with _file.open("wb") as plist_file:
+            plistlib.dump(_plist, plist_file, sort_keys=True)
 
 
     def _embed_resources(self) -> None:

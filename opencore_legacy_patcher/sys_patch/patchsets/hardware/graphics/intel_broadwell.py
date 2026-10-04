@@ -71,7 +71,7 @@ class IntelBroadwell(BaseHardware):
                         "AppleIntelBDWGraphics.kext":            self._resolve_monterey_framebuffers(),
                         "AppleIntelBDWGraphicsFramebuffer.kext": self._resolve_monterey_framebuffers(),
                         "AppleIntelBDWGraphicsGLDriver.bundle":  "12.5",
-                        **({ "AppleIntelBDWGraphicsMTLDriver.bundle": f"12.5-{self._xnu_major}" }),
+                        **self._metal_driver_patch("AppleIntelBDWGraphicsMTLDriver.bundle"),
                         "AppleIntelBDWGraphicsVADriver.bundle":  "12.5",
                         "AppleIntelBDWGraphicsVAME.bundle":      "12.5",
                         "AppleIntelGraphicsShared.bundle":       "12.5",

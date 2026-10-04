@@ -1341,12 +1341,15 @@ Hardware Information:
             branches = [self.constants.commit_info[0].split("/")[-1]]
         result = network_handler.NetworkUtilities().get("https://api.github.com/repos/kgp-macPro/OCLP-CustoMac/branches")
         if result is not None:
-            result = result.json()
-            for branch in result:
-                if branch["name"] == "gh-pages":
+            try:
+                remote_branches = result.json()
+            finally:
+                result.close()
+            for remote_branch in remote_branches:
+                if remote_branch["name"] == "gh-pages":
                     continue
-                if branch["name"] not in branches:
-                    branches.append(branch["name"])
+                if remote_branch["name"] not in branches:
+                    branches.append(remote_branch["name"])
 
             with wx.SingleChoiceDialog(self.parent, "Which branch would you like to download?", "Branch Selection", branches) as dialog:
                 if dialog.ShowModal() == wx.ID_CANCEL:

@@ -10,6 +10,7 @@ from ... import constants
 from ...datasets import os_data
 from ...support import subprocess_wrapper, kdk_handler
 from ...support.kdk_selection import (
+    BLOCKED_ROOT_PATCH_KDK_MESSAGE,
     KernelDebugKitCandidate,
     KernelDebugKitIdentity,
     kdk_darwin_major,
@@ -75,7 +76,7 @@ class KernelDebugKitMerge:
             return
         if kdk_darwin_major(build) is None:
             raise Exception("Kernel Debug Kit ProductBuildVersion could not be established")
-        raise Exception("Darwin 26 Kernel Debug Kits are prohibited for root patching")
+        raise Exception(BLOCKED_ROOT_PATCH_KDK_MESSAGE)
 
 
     def _require_permitted_kdk(self, kdk_obj: kdk_handler.KernelDebugKitObject) -> None:
@@ -108,7 +109,8 @@ class KernelDebugKitMerge:
             return False
 
         try:
-            oclp_plist_data = plistlib.load(open(oclp_plist, "rb"))
+            with oclp_plist.open("rb") as metadata_file:
+                oclp_plist_data = plistlib.load(metadata_file)
             if "Kernel Debug Kit Used" not in oclp_plist_data:
                 return False
             if oclp_plist_data["Kernel Debug Kit Used"] == str(kdk_path):

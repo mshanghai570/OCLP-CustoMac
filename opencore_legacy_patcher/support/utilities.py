@@ -562,8 +562,9 @@ def fetch_staged_update(variant: str = "Update") -> tuple[str, str]:
     if not Path(update_config).exists():
         return (None, None)
     try:
-        update_staged = plistlib.load(open(update_config, "rb"))
-    except:
+        with Path(update_config).open("rb") as update_file:
+            update_staged = plistlib.load(update_file)
+    except Exception:
         return (None, None)
     if "update-asset-attributes" not in update_staged:
         return (None, None)
@@ -606,6 +607,7 @@ def check_cli_args():
 
     # validation args
     parser.add_argument("--validate", help="Runs Validation Tests for CI", action="store_true", required=False)
+    parser.add_argument("--validate_unused_payload", help="Runs Validation Tests, then reports the PatcherSupportPkg files no patch set can reach", action="store_true", required=False)
 
     # GUI args
     parser.add_argument("--gui_patch", help="Starts GUI in Root Patcher", action="store_true", required=False)
@@ -619,6 +621,7 @@ def check_cli_args():
         args.patch_sys_vol or
         args.unpatch_sys_vol or
         args.validate or
+        args.validate_unused_payload or
         args.auto_patch or
         args.prepare_for_update or
         args.cache_os

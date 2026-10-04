@@ -34,6 +34,25 @@ class os_data(enum.IntEnum):
     max_os =        99
 
 
+# The releases this patcher supports for root patching, as kernel major versions,
+# oldest first. One list, because two places ask the same question:
+# `HardwarePatchsetDetection._validation_check_unsupported_host_os` bounds the
+# host with it, and `PatcherValidation._validate_sys_patch` walks it to check
+# each release's patch sources against the payload. The walk used to end at
+# Sequoia while the bound already allowed Tahoe, so the fork's own target was the
+# one release whose sources no validation run ever checked.
+SUPPORTED_MAJOR_VERSIONS: tuple[int, ...] = tuple(
+    member.value for member in (
+        os_data.big_sur,
+        os_data.monterey,
+        os_data.ventura,
+        os_data.sonoma,
+        os_data.sequoia,
+        os_data.tahoe,
+    )
+)
+
+
 class os_conversion:
 
     def os_to_kernel(os: str) -> int:
@@ -48,8 +67,14 @@ class os_conversion:
         """
         if os.startswith("10."):
             return (int(os.split(".")[1]) + 4)
-        else:
-            return (int(os.split(".")[0]) + 9)
+
+        major = int(os.split(".")[0])
+        # macOS 11 through 15 are Darwin 20 through 24, so adding nine gave the
+        # kernel major. macOS 26 is Darwin 25: the marketing number runs one
+        # ahead from Tahoe on, and adding nine returned 35.
+        if major > os_data.tahoe.value:
+            return major - 1
+        return major + 9
 
 
     def kernel_to_os(kernel: int) -> str:
@@ -62,6 +87,9 @@ class os_conversion:
         Returns:
             str: OS version
         """
+        if kernel >= os_data.tahoe.value:
+            # Darwin 25 is macOS 26, not 16: see `os_to_kernel`.
+            return str(kernel + 1)
         if kernel >= os_data.big_sur:
             return str((kernel - 9))
         else:

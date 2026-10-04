@@ -49,7 +49,7 @@ class arguments:
         Parses arguments passed to the patcher
         """
 
-        if self.args.validate:
+        if self.args.validate or self.args.validate_unused_payload:
             self._validation_handler()
             return
 
@@ -83,7 +83,10 @@ class arguments:
         Enter validation mode
         """
         logging.info("Set Validation Mode")
-        validation.PatcherValidation(self.constants)
+        validation.PatcherValidation(
+            self.constants,
+            verify_unused_files=self.args.validate_unused_payload,
+        )
 
 
     def _sys_patch_handler(self) -> None:
@@ -171,7 +174,8 @@ class arguments:
             if not Path(f"{kext}/Contents/Info.plist").exists():
                 continue
             try:
-                kext_plist = plistlib.load(open(f"{kext}/Contents/Info.plist", "rb"))
+                with Path(f"{kext}/Contents/Info.plist").open("rb") as info_file:
+                    kext_plist = plistlib.load(info_file)
             except Exception as e:
                 logging.info(f"  - Failed to load plist for {kext.name}: {e}")
                 continue

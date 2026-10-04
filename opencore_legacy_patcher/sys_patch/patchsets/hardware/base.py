@@ -36,6 +36,24 @@ class HardwareVariantGraphicsSubclass(StrEnum):
     NOT_APPLICABLE:       str = "N/A"
 
 
+# `12.5-<generation>` Metal driver source directories published by
+# PatcherSupportPkg, keyed by the Darwin generation each one serves.
+#
+# A generation missing from this table has no published driver, so a family must
+# omit the driver rather than name a directory that does not exist. Darwin 25 has
+# no `12.5-25`, which is why five graphics families stay dormant: publishing that
+# one directory is what would let them emit a complete patch set.
+#
+# Nothing here may be guessed. `tests/test_tahoe_metal_driver_resolver.py`
+# cross-checks every value against the pinned release's published sources, so an
+# entry that is not actually published fails the suite.
+METAL_DRIVER_GENERATIONS: dict[int, str] = {
+    22: "12.5-22",  # Ventura
+    23: "12.5-23",  # Sonoma
+    24: "12.5-24",  # Sequoia
+}
+
+
 class BaseHardware(BasePatchset):
 
     def __init__(self, xnu_major, xnu_minor, os_build, global_constants: Constants) -> None:
@@ -148,6 +166,22 @@ class BaseHardware(BasePatchset):
                 return True
 
         return False
+
+
+    def _metal_driver_patch(self, driver: str) -> dict[str, str]:
+        """
+        Source entry for this OS generation's Metal driver, if one is published
+
+        Returns an empty dictionary when PatcherSupportPkg publishes no driver for
+        this generation, so the caller omits the entry instead of naming a source
+        that does not exist. Returning a fallback generation's driver is
+        deliberately not an option: a Sequoia Metal driver is not evidence of a
+        working Tahoe one, and pretending otherwise would ship an unverified patch.
+        """
+        source = METAL_DRIVER_GENERATIONS.get(self._xnu_major)
+        if source is None:
+            return {}
+        return {driver: source}
 
 
     def _resolve_monterey_framebuffers(self) -> str:

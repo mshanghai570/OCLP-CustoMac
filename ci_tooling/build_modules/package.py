@@ -30,6 +30,7 @@ class GeneratePackage:
             "./payloads/Launch Services/com.dortania.opencore-legacy-patcher.auto-patch.plist": "/Library/LaunchAgents/com.dortania.opencore-legacy-patcher.auto-patch.plist",
         }
         self._autopkg_files.update(self._files)
+        self._temporary_scripts: list[Path] = []
 
 
     def _generate_installer_welcome(self) -> str:
@@ -84,7 +85,25 @@ class GeneratePackage:
         return _welcome
 
 
+    def _write_temporary_script(self, contents: str) -> str:
+        """Write a package script and close its temporary file handle."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as script_file:
+            self._temporary_scripts.append(Path(script_file.name))
+            script_file.write(contents)
+            return script_file.name
+
+
     def generate(self) -> None:
+        """Generate packages and remove temporary scripts even on failure."""
+        self._temporary_scripts = []
+        try:
+            self._generate_packages()
+        finally:
+            for script in self._temporary_scripts:
+                script.unlink(missing_ok=True)
+
+
+    def _generate_packages(self) -> None:
         """
         Generate OpenCore-Patcher.pkg
         """
@@ -92,16 +111,14 @@ class GeneratePackage:
         payload_contract.validate_application(Path("./dist/OpenCore-Patcher.app"))
 
         print("Generating OpenCore-Patcher-Uninstaller.pkg")
-        _tmp_uninstall = tempfile.NamedTemporaryFile(delete=False)
-        with open(_tmp_uninstall.name, "w") as f:
-            f.write(GenerateScripts().uninstall())
+        _tmp_uninstall = self._write_temporary_script(GenerateScripts().uninstall())
 
         assert macos_pkg_builder.Packages(
             pkg_output="./dist/OpenCore-Patcher-Uninstaller.pkg",
             pkg_bundle_id="com.dortania.opencore-legacy-patcher-uninstaller",
             pkg_version=constants.Constants().patcher_version,
             pkg_background="./ci_tooling/pkg_assets/PkgBackground-Uninstaller.png",
-            pkg_preinstall_script=_tmp_uninstall.name,
+            pkg_preinstall_script=_tmp_uninstall,
             pkg_as_distribution=True,
             pkg_title=f"{constants.Constants().patcher_name} Uninstaller",
             pkg_welcome=self._generate_uninstaller_welcome(),
@@ -109,12 +126,8 @@ class GeneratePackage:
 
         print("Generating OpenCore-Patcher.pkg")
 
-        _tmp_pkg_preinstall = tempfile.NamedTemporaryFile(delete=False)
-        _tmp_pkg_postinstall = tempfile.NamedTemporaryFile(delete=False)
-        with open(_tmp_pkg_preinstall.name, "w") as f:
-            f.write(GenerateScripts().preinstall_pkg())
-        with open(_tmp_pkg_postinstall.name, "w") as f:
-            f.write(GenerateScripts().postinstall_pkg())
+        _tmp_pkg_preinstall = self._write_temporary_script(GenerateScripts().preinstall_pkg())
+        _tmp_pkg_postinstall = self._write_temporary_script(GenerateScripts().postinstall_pkg())
 
         assert macos_pkg_builder.Packages(
             pkg_output="./dist/OpenCore-Patcher.pkg",
@@ -123,8 +136,8 @@ class GeneratePackage:
             pkg_allow_relocation=False,
             pkg_as_distribution=True,
             pkg_background="./ci_tooling/pkg_assets/PkgBackground-Installer.png",
-            pkg_preinstall_script=_tmp_pkg_preinstall.name,
-            pkg_postinstall_script=_tmp_pkg_postinstall.name,
+            pkg_preinstall_script=_tmp_pkg_preinstall,
+            pkg_postinstall_script=_tmp_pkg_postinstall,
             pkg_file_structure=self._files,
             pkg_title=constants.Constants().patcher_name,
             pkg_welcome=self._generate_installer_welcome(),
@@ -134,12 +147,8 @@ class GeneratePackage:
 
         print("Generating AutoPkg-Assets.pkg")
 
-        _tmp_auto_pkg_preinstall = tempfile.NamedTemporaryFile(delete=False)
-        _tmp_auto_pkg_postinstall = tempfile.NamedTemporaryFile(delete=False)
-        with open(_tmp_auto_pkg_preinstall.name, "w") as f:
-            f.write(GenerateScripts().preinstall_autopkg())
-        with open(_tmp_auto_pkg_postinstall.name, "w") as f:
-            f.write(GenerateScripts().postinstall_autopkg())
+        _tmp_auto_pkg_preinstall = self._write_temporary_script(GenerateScripts().preinstall_autopkg())
+        _tmp_auto_pkg_postinstall = self._write_temporary_script(GenerateScripts().postinstall_autopkg())
 
         assert macos_pkg_builder.Packages(
             pkg_output="./dist/AutoPkg-Assets.pkg",
@@ -148,8 +157,8 @@ class GeneratePackage:
             pkg_allow_relocation=False,
             pkg_as_distribution=True,
             pkg_background="./ci_tooling/pkg_assets/PkgBackground-AutoPkg.png",
-            pkg_preinstall_script=_tmp_auto_pkg_preinstall.name,
-            pkg_postinstall_script=_tmp_auto_pkg_postinstall.name,
+            pkg_preinstall_script=_tmp_auto_pkg_preinstall,
+            pkg_postinstall_script=_tmp_auto_pkg_postinstall,
             pkg_file_structure=self._autopkg_files,
             pkg_title="AutoPkg Assets",
             pkg_welcome=self._generate_autopkg_welcome(),

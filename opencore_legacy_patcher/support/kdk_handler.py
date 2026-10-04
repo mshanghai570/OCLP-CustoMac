@@ -22,7 +22,14 @@ from . import (
     network_handler,
     subprocess_wrapper
 )
-from .kdk_selection import KernelDebugKitCandidate, kdk_darwin_major, root_patch_kdk_build_allowed
+from .kdk_selection import (
+    BLOCKED_ROOT_PATCH_KDK_DARWIN_LABEL,
+    BLOCKED_ROOT_PATCH_KDK_MESSAGE,
+    KernelDebugKitCandidate,
+    is_blocked_root_patch_kdk,
+    kdk_darwin_major,
+    root_patch_kdk_build_allowed,
+)
 
 KDK_INSTALL_PATH: str  = "/Library/Developer/KDKs"
 KDK_INFO_PLIST:   str  = "KDKInfo.plist"
@@ -129,13 +136,16 @@ class KernelDebugKitObject:
             logging.info("Could not contact KDK API")
             return None
 
-        if results.status_code != 200:
-            logging.info("Could not fetch KDK list")
-            return None
+        try:
+            if results.status_code != 200:
+                logging.info("Could not fetch KDK list")
+                return None
 
-        KDK_ASSET_LIST = results.json()
+            KDK_ASSET_LIST = results.json()
 
-        return KDK_ASSET_LIST
+            return KDK_ASSET_LIST
+        finally:
+            results.close()
 
 
     def available_candidates(self) -> tuple[KernelDebugKitCandidate, ...]:
@@ -165,8 +175,8 @@ class KernelDebugKitObject:
             if root_patch_kdk_build_allowed(build) is False:
                 version = entry.get("version")
                 identity = f"{build} ({version})" if build and version else str(build or "unknown")
-                if kdk_darwin_major(build) == 26:
-                    logging.warning(f"Ignoring prohibited Darwin 26 KDK: {identity}")
+                if is_blocked_root_patch_kdk(build):
+                    logging.warning(f"Ignoring prohibited Darwin {BLOCKED_ROOT_PATCH_KDK_DARWIN_LABEL} KDK: {identity}")
                 else:
                     logging.warning(f"Ignoring KDK catalog entry without a valid ProductBuildVersion: {identity}")
                 continue
@@ -384,7 +394,7 @@ class KernelDebugKitObject:
         self.error_msg = ""
 
         if root_patch_kdk_build_allowed(self.kdk_url_build) is False:
-            self.error_msg = "Darwin 26 Kernel Debug Kits are prohibited for root patching"
+            self.error_msg = BLOCKED_ROOT_PATCH_KDK_MESSAGE
             logging.error(self.error_msg)
             return None
 
@@ -453,7 +463,8 @@ class KernelDebugKitObject:
             return False
 
         # Get build from KDK
-        kdk_plist_data = plistlib.load(Path(f"{kdk_path}/System/Library/CoreServices/SystemVersion.plist").open("rb"))
+        with Path(f"{kdk_path}/System/Library/CoreServices/SystemVersion.plist").open("rb") as version_file:
+            kdk_plist_data = plistlib.load(version_file)
         if "ProductBuildVersion" not in kdk_plist_data:
             logging.info(f"Corrupted KDK found ({kdk_path.name}), removing due to missing ProductBuildVersion")
             self._remove_kdk(kdk_path)
@@ -461,7 +472,7 @@ class KernelDebugKitObject:
 
         kdk_build = kdk_plist_data["ProductBuildVersion"]
         if root_patch_kdk_build_allowed(kdk_build) is False:
-            logging.warning(f"Ignoring prohibited Darwin 26 KDK: {kdk_path.name}")
+            logging.warning(f"Ignoring prohibited Darwin {BLOCKED_ROOT_PATCH_KDK_DARWIN_LABEL} KDK: {kdk_path.name}")
             return False
 
         # Check pkg receipts for this build, will give a canonical list if all files that should be present
@@ -535,7 +546,7 @@ class KernelDebugKitObject:
                 match = self.host_build
 
         if check_version is False and root_patch_kdk_build_allowed(match) is False:
-            logging.warning(f"Refusing prohibited Darwin 26 KDK lookup: {match}")
+            logging.warning(f"Refusing prohibited Darwin {BLOCKED_ROOT_PATCH_KDK_DARWIN_LABEL} KDK lookup: {match}")
             return None
 
         if not Path(KDK_INSTALL_PATH).exists():
@@ -572,7 +583,7 @@ class KernelDebugKitObject:
 
             package_build_match = re.search(r"_(\d+[A-Za-z][A-Za-z0-9]*)\.pkg$", kdk_pkg.name)
             if package_build_match and root_patch_kdk_build_allowed(package_build_match.group(1)) is False:
-                logging.warning(f"Ignoring prohibited Darwin 26 KDK backup: {kdk_pkg.name}")
+                logging.warning(f"Ignoring prohibited Darwin {BLOCKED_ROOT_PATCH_KDK_DARWIN_LABEL} KDK backup: {kdk_pkg.name}")
                 continue
 
             logging.info(f"Found KDK backup: {kdk_pkg.name}")
@@ -787,7 +798,8 @@ class KernelDebugKitUtilities:
             logging.warning("KDK Info.plist does not exist, cannot create backup")
             return
 
-        kdk_info_dict = plistlib.load(kdk_info_plist.open("rb"))
+        with kdk_info_plist.open("rb") as info_file:
+            kdk_info_dict = plistlib.load(info_file)
 
         if 'version' not in kdk_info_dict or 'build' not in kdk_info_dict:
             logging.warning("Malformed KDK Info.plist provided, cannot create backup")

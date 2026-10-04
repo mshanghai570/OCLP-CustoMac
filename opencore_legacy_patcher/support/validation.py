@@ -22,10 +22,19 @@ from ..datasets import (
     os_data
 )
 from ..sys_patch.patchsets import (
+    COPY_OPERATIONS,
     HardwarePatchsetDetection,
     PatchType,
-    DynamicPatchset
+    PayloadSourceError,
+    format_missing_sources,
+    is_runtime_sourced,
+    iter_patchset_sources
 )
+
+
+# Entries every Universal-Binaries image carries that no patch set can name, so
+# they must not be reported as dead weight.
+_UNUSED_SCAN_IGNORED: tuple[str, ...] = (".fseventsd/fseventsd-uuid", ".signed")
 
 
 class PatcherValidation:
@@ -135,31 +144,41 @@ class PatcherValidation:
                 if install_type not in PatchType:
                     raise Exception(f"Unknown PatchType: {install_type}")
 
-            for install_type in [PatchType.OVERWRITE_SYSTEM_VOLUME, PatchType.OVERWRITE_DATA_VOLUME, PatchType.MERGE_SYSTEM_VOLUME, PatchType.MERGE_DATA_VOLUME]:
-                if install_type in patchset[patch_core]:
-                    for install_directory in patchset[patch_core][install_type]:
-                        for install_file in patchset[patch_core][install_type][install_directory]:
-                            try:
-                                if patchset[patch_core][install_type][install_directory][install_file] in DynamicPatchset:
-                                    continue
-                            except TypeError:
-                                pass
+            for install_type in COPY_OPERATIONS:
+                if install_type not in patchset[patch_core]:
+                    continue
+                for install_directory in patchset[patch_core][install_type]:
+                    for install_file in patchset[patch_core][install_type][install_directory]:
+                        if is_runtime_sourced(patchset[patch_core][install_type][install_directory][install_file]):
+                            continue
 
-                            # Technically there is nothing wrong with using a .framework with OVERWRITE, but it's a good indicator of a mistake
-                            if install_type in [PatchType.OVERWRITE_SYSTEM_VOLUME, PatchType.OVERWRITE_DATA_VOLUME]:
-                                if install_file.endswith(".framework") and install_file not in patch_type_overwrite_exempt:
-                                    raise Exception(f"{install_file} used with {install_type}, are you certain this is correct?")
-                            elif install_type in [PatchType.MERGE_SYSTEM_VOLUME, PatchType.MERGE_DATA_VOLUME]:
-                                if not install_file.endswith(".framework") and install_file not in patch_type_merge_exempt:
-                                    raise Exception(f"{install_file} used with {install_type}, are you certain this is correct?")
+                        # Technically there is nothing wrong with using a .framework with OVERWRITE, but it's a good indicator of a mistake
+                        if install_type in [PatchType.OVERWRITE_SYSTEM_VOLUME, PatchType.OVERWRITE_DATA_VOLUME]:
+                            if install_file.endswith(".framework") and install_file not in patch_type_overwrite_exempt:
+                                raise Exception(f"{install_file} used with {install_type}, are you certain this is correct?")
+                        elif install_type in [PatchType.MERGE_SYSTEM_VOLUME, PatchType.MERGE_DATA_VOLUME]:
+                            if not install_file.endswith(".framework") and install_file not in patch_type_merge_exempt:
+                                raise Exception(f"{install_file} used with {install_type}, are you certain this is correct?")
 
-                            source_file = str(self.constants.payload_local_binaries_root_path) + "/" + patchset[patch_core][install_type][install_directory][install_file] + install_directory + "/" + install_file
-                            if not Path(source_file).exists():
-                                logging.info(f"File not found: {source_file}")
-                                raise Exception(f"Failed to find {source_file}")
-                            if self.verify_unused_files is True:
-                                if source_file not in self.active_patchset_files:
-                                    self.active_patchset_files.append(source_file)
+        # Confirm every bundled source through the same traversal the installer
+        # and the build contract use, rather than composing the path again here.
+        # Sources read from the booted root volume are skipped: they are not ours
+        # to verify, and they sit outside the payload root that
+        # `active_patchset_files` is resolved against.
+        payload_root = Path(self.constants.payload_local_binaries_root_path)
+        missing: list[tuple[str, str]] = []
+        for patchset_name, source_file, from_payload in iter_patchset_sources(patchset):
+            if not from_payload:
+                continue
+            resolved = payload_root / source_file
+            if not resolved.exists():
+                logging.info(f"File not found: {resolved}")
+                missing.append((patchset_name, source_file))
+                continue
+            if self.verify_unused_files is True and str(resolved) not in self.active_patchset_files:
+                self.active_patchset_files.append(str(resolved))
+        if missing:
+            raise PayloadSourceError(format_missing_sources(missing))
 
         logging.info(f"Validating against Darwin {major_kernel}.{minor_kernel}")
         if not sys_patch_helpers.SysPatchHelpers(self.constants).generate_patchset_plist(patchset, f"OpenCore-Legacy-Patcher-{major_kernel}.{minor_kernel}.plist", None, None):
@@ -228,7 +247,10 @@ class PatcherValidation:
 
         atexit.register(self._unmount_dmg)
 
-        for supported_os in [os_data.os_data.big_sur, os_data.os_data.monterey, os_data.os_data.ventura, os_data.os_data.sonoma, os_data.os_data.sequoia]:
+        # Every supported release, through the same declaration the host-OS check
+        # bounds itself with, so the target of this fork is not the one release
+        # left unvalidated.
+        for supported_os in os_data.SUPPORTED_MAJOR_VERSIONS:
             for i in range(0, 10):
                 self._validate_root_patch_files(supported_os, i)
 
@@ -262,48 +284,66 @@ class PatcherValidation:
         )
 
 
-    def _find_unused_files(self) -> None:
+    def _find_unused_files(self) -> list[Path]:
         """
-        Find PatcherSupportPkg files that are unused by the patcher
+        Return PatcherSupportPkg files that no validated patchset can reach
 
-        Note this function is extremely slow, so only manually run when needed
+        A file is used when a patchset names it, or names a directory it lives
+        beneath, since root patches copy whole bundles.
+
+        The previous version asked whether either path appeared anywhere inside
+        the other. That is a superset of the rule above, so it could only hide
+        dead weight: a file whose name merely starts with a named path was
+        counted as used, which is how a kept-aside copy such as
+        `AppleHDA.kext.backup` stayed invisible. It also recomputed
+        `Path.relative_to` for every file against every named source, which is
+        what made it too slow to be worth running.
         """
         if self.active_patchset_files == []:
-            return
+            return []
 
-        unused_files = []
+        payload_root = Path(self.constants.payload_local_binaries_root_path)
 
-        for file in Path(self.constants.payload_local_binaries_root_path).rglob("*"):
+        # Named sources are payload-relative; paths outside the payload are not
+        # ours to report on, and `relative_to` raises on them.
+        used: set[Path] = set()
+        for named_source in self.active_patchset_files:
+            try:
+                used.add(Path(named_source).relative_to(payload_root))
+            except ValueError:
+                continue
+
+        unused_files: list[Path] = []
+        scanned = 0
+        for file in payload_root.rglob("*"):
             if file.is_dir():
                 continue
 
-            relative_path = Path(file).relative_to(self.constants.payload_local_binaries_root_path)
+            relative_path = file.relative_to(payload_root)
+            scanned += 1
 
             if relative_path.name == ".DS_Store":
                 continue
 
-            if str(relative_path) in [".fseventsd/fseventsd-uuid", ".signed"]:
+            if str(relative_path) in _UNUSED_SCAN_IGNORED:
                 continue
 
-            is_used = False
-            for used_file in self.active_patchset_files:
-                used_relative_path = Path(used_file).relative_to(self.constants.payload_local_binaries_root_path)
-                if str(relative_path) in str(used_relative_path):
-                    is_used = True
-                    break
-                if str(used_relative_path) in str(relative_path):
-                    is_used = True
-                    break
+            if relative_path in used:
+                continue
 
-            if is_used:
+            if any(parent in used for parent in relative_path.parents):
                 continue
 
             unused_files.append(relative_path)
 
-        if len(unused_files) > 0:
-            logging.info("Unused files found:")
-            for file in unused_files:
-                logging.info(f"  {file}")
+        logging.info(
+            f"Unused files found: {len(unused_files)} of {scanned} files in "
+            "Universal-Binaries are unreachable by any validated patch set"
+        )
+        for file in unused_files:
+            logging.info(f"  {file}")
+
+        return unused_files
 
 
     def _validate_configs(self) -> None:

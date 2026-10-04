@@ -8,7 +8,7 @@ import plistlib
 from pathlib  import Path
 from datetime import datetime
 
-from ...patchsets import PatchType
+from ...patchsets import COPY_OPERATIONS
 
 from ....datasets import os_data
 from ....support  import subprocess_wrapper
@@ -42,7 +42,8 @@ class KernelCacheSupport:
         try:
             aux_cache_path = Path(self.mount_location_data) / Path("/private/var/db/KernelExtensionManagement/AuxKC/CurrentAuxKC/com.apple.kcgen.instructions.plist")
             if aux_cache_path.exists():
-                aux_cache_data = plistlib.load((aux_cache_path).open("rb"))
+                with aux_cache_path.open("rb") as aux_cache_file:
+                    aux_cache_data = plistlib.load(aux_cache_file)
                 for kext in aux_cache_data["kextsToBuild"]:
                     if "bundlePathMainOS" in aux_cache_data["kextsToBuild"][kext]:
                         if aux_cache_data["kextsToBuild"][kext]["bundlePathMainOS"] == f"/Library/Extensions/{kext_name}":
@@ -93,7 +94,8 @@ class KernelCacheSupport:
 
         logging.info(f"  - Adding AuxKC support to {install_file}")
         plist_path = Path(Path(source_folder_path) / Path(install_file) / Path("Contents/Info.plist"))
-        plist_data = plistlib.load((plist_path).open("rb"))
+        with plist_path.open("rb") as plist_file:
+            plist_data = plistlib.load(plist_file)
 
         # Check if we need to update the 'OSBundleRequired' entry
         if not plist_data["CFBundleIdentifier"].startswith("com.apple."):
@@ -103,7 +105,8 @@ class KernelCacheSupport:
                 return updated_install_location
 
         plist_data["OSBundleRequired"] = "Auxiliary"
-        plistlib.dump(plist_data, plist_path.open("wb"))
+        with plist_path.open("wb") as plist_file:
+            plistlib.dump(plist_data, plist_file)
 
         return updated_install_location
 
@@ -129,7 +132,7 @@ class KernelCacheSupport:
             for key in oclp_plist_data:
                 if isinstance(oclp_plist_data[key], (bool, int)):
                     continue
-                for install_type in [PatchType.OVERWRITE_SYSTEM_VOLUME, PatchType.OVERWRITE_DATA_VOLUME, PatchType.MERGE_SYSTEM_VOLUME, PatchType.MERGE_DATA_VOLUME]:
+                for install_type in COPY_OPERATIONS:
                     if install_type not in oclp_plist_data[key]:
                         continue
                     for location in oclp_plist_data[key][install_type]:

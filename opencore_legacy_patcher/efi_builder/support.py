@@ -14,6 +14,18 @@ from pathlib import Path
 from .. import constants
 
 
+def load_plist(path: str | Path) -> dict:
+    """Load a plist while ensuring its file handle is closed immediately."""
+    with Path(path).open("rb") as plist_file:
+        return plistlib.load(plist_file)
+
+
+def dump_plist(plist: dict, path: str | Path) -> None:
+    """Write a plist while ensuring its file handle is closed immediately."""
+    with Path(path).open("wb") as plist_file:
+        plistlib.dump(plist, plist_file, sort_keys=True)
+
+
 class BuildSupport:
     """
     Support Library for build.py and related libraries
@@ -127,7 +139,8 @@ class BuildSupport:
             logging.info("- OpenCore config file missing!!!")
             raise Exception("OpenCore config file missing")
 
-        config_plist = plistlib.load(Path(self.constants.opencore_release_folder / Path("EFI/OC/config.plist")).open("rb"))
+        with Path(self.constants.opencore_release_folder / Path("EFI/OC/config.plist")).open("rb") as config_file:
+            config_plist = plistlib.load(config_file)
 
         for acpi in config_plist["ACPI"]["Add"]:
             if not Path(self.constants.opencore_release_folder / Path("EFI/OC/ACPI") / Path(acpi["Path"])).exists():
@@ -181,7 +194,8 @@ class BuildSupport:
             if not Path(kext_folder / Path("Contents/Info.plist")).exists():
                 continue
 
-            kext_data = plistlib.load(Path(kext_folder / Path("Contents/Info.plist")).open("rb"))
+            with Path(kext_folder / Path("Contents/Info.plist")).open("rb") as info_file:
+                kext_data = plistlib.load(info_file)
             if "CFBundleExecutable" in kext_data:
                 expected_executable = Path(kext_folder / Path("Contents/MacOS") / Path(kext_data["CFBundleExecutable"]))
                 if not expected_executable.exists():

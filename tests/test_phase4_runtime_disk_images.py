@@ -3,6 +3,7 @@
 import subprocess
 import tempfile
 import unittest
+import hashlib
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,43 @@ from opencore_legacy_patcher.sys_patch.utilities import dmg_mount
 
 
 class ProtectedDiskImageTests(unittest.TestCase):
+    def test_runtime_rejects_mismatched_support_image_before_mount(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(dmg_mount.disk_image, "attach_protected_disk_image") as attach:
+            root = Path(directory)
+            image = root / "Universal-Binaries.dmg"
+            image.write_bytes(b"unexpected image")
+            constants = SimpleNamespace(
+                payload_local_binaries_root_path_dmg=image,
+                payload_local_binaries_root_path=root / "Universal-Binaries",
+                payload_path=root,
+                patcher_support_pkg_sha256="0" * 64,
+                overlay_psp_path_dmg=root / "DortaniaInternalResources.dmg",
+                app_icon_path=root / "icon.icns",
+            )
+
+            self.assertFalse(dmg_mount.PatcherSupportPkgMount(constants).mount())
+            attach.assert_not_called()
+
+    def test_runtime_accepts_pinned_support_image(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(dmg_mount.disk_image, "attach_protected_disk_image") as attach:
+            root = Path(directory)
+            image = root / "Universal-Binaries.dmg"
+            image.write_bytes(b"expected image")
+            constants = SimpleNamespace(
+                payload_local_binaries_root_path_dmg=image,
+                payload_local_binaries_root_path=root / "Universal-Binaries",
+                payload_path=root,
+                patcher_support_pkg_sha256=hashlib.sha256(b"expected image").hexdigest(),
+                overlay_psp_path_dmg=root / "DortaniaInternalResources.dmg",
+                app_icon_path=root / "icon.icns",
+            )
+            attach.return_value = subprocess.CompletedProcess([], 0, b"")
+
+            self.assertTrue(dmg_mount.PatcherSupportPkgMount(constants).mount())
+            attach.assert_called_once()
+
     def test_both_runtime_images_use_stdin_passphrase(self) -> None:
         for image_name in ("payloads.dmg", "Universal-Binaries.dmg"):
             with self.subTest(image_name=image_name), \
