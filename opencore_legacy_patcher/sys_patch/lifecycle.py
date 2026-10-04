@@ -6,6 +6,8 @@ import hashlib
 import logging
 import plistlib
 import subprocess
+import stat
+import tempfile
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -24,6 +26,7 @@ class RootPatchLifecycleState(StrEnum):
     PATCH_IN_PROGRESS = "PATCH_IN_PROGRESS"
     PATCH_FAILED_RECOVERY_REQUIRED = "PATCH_FAILED_RECOVERY_REQUIRED"
     PATCH_PENDING_REBOOT = "PATCH_PENDING_REBOOT"
+    REVERT_IN_PROGRESS = "REVERT_IN_PROGRESS"
     REVERT_PENDING = "REVERT_PENDING"
 
 
@@ -137,22 +140,63 @@ class RootPatchLifecycleStore:
         }
         payload = plistlib.dumps(data, fmt=plistlib.FMT_XML, sort_keys=False)
         if self.writer is not None:
-            return bool(self.writer(self.path, payload))
+            if not self.writer(self.path, payload):
+                return False
+            return self._matches_written_record(state, boot_session_uuid, installed_metadata)
 
-        local_path = Path(self.constants.payload_path) / ROOT_PATCH_LIFECYCLE_FILENAME
-        destination_temporary = self.path.with_name(f".{self.path.name}.tmp")
+        local_path = None
+        destination_temporary = None
         try:
-            local_path.write_bytes(payload)
+            with tempfile.NamedTemporaryFile(dir=self.constants.payload_path, prefix=".lifecycle-", delete=False) as local_file:
+                local_path = Path(local_file.name)
+                local_file.write(payload)
             subprocess_wrapper.run_as_root_and_verify(["/bin/mkdir", "-p", str(self.path.parent)])
+            parent_stat = self.path.parent.lstat()
+            if not stat.S_ISDIR(parent_stat.st_mode) or parent_stat.st_uid != 0 or parent_stat.st_mode & 0o022:
+                raise PermissionError("Lifecycle directory must be root-owned and protected from other writers")
+            if self.path.exists() or self.path.is_symlink():
+                target_stat = self.path.lstat()
+                if not stat.S_ISREG(target_stat.st_mode) or target_stat.st_uid != 0 or target_stat.st_nlink != 1 or target_stat.st_mode & 0o022:
+                    raise PermissionError("Existing lifecycle record is not a protected regular file")
+            created = subprocess_wrapper.run_as_root(
+                ["/usr/bin/mktemp", str(self.path.parent / f".{self.path.name}.XXXXXX")],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            subprocess_wrapper.verify(created)
+            temporary_name = created.stdout.decode() if isinstance(created.stdout, bytes) else created.stdout
+            candidate = Path(temporary_name.strip())
+            if candidate.parent != self.path.parent or not candidate.name.startswith(f".{self.path.name}."):
+                raise ValueError("Invalid lifecycle temporary path")
+            temporary_stat = candidate.lstat()
+            if not stat.S_ISREG(temporary_stat.st_mode) or temporary_stat.st_uid != 0 or temporary_stat.st_nlink != 1:
+                raise PermissionError("Lifecycle staging file must be a root-owned regular file")
+            destination_temporary = candidate
             subprocess_wrapper.run_as_root_and_verify(["/bin/cp", "-f", str(local_path), str(destination_temporary)])
             subprocess_wrapper.run_as_root_and_verify(["/bin/chmod", "0644", str(destination_temporary)])
             subprocess_wrapper.run_as_root_and_verify(["/bin/mv", "-f", str(destination_temporary), str(self.path)])
+            subprocess_wrapper.run_as_root_and_verify(["/bin/sync"])
         except Exception as error:
             logging.error(f"- Failed to record pending root-patch lifecycle: {error}")
             return False
         finally:
-            try:
-                local_path.unlink()
-            except FileNotFoundError:
-                pass
-        return self.read().discovery == LifecycleDiscovery.VALID
+            if local_path is not None:
+                try:
+                    local_path.unlink(missing_ok=True)
+                except OSError as error:
+                    logging.warning(f"- Failed to remove local lifecycle staging file: {error}")
+            if destination_temporary is not None and destination_temporary.exists():
+                try:
+                    subprocess_wrapper.run_as_root_and_verify(["/bin/rm", "-f", str(destination_temporary)])
+                except Exception as error:
+                    logging.error(f"- Failed to remove lifecycle staging file: {error}")
+        return self._matches_written_record(state, boot_session_uuid, installed_metadata)
+
+    def _matches_written_record(self, state, boot_session_uuid, installed_metadata) -> bool:
+        result = self.read()
+        return (
+            result.discovery == LifecycleDiscovery.VALID
+            and result.record is not None
+            and result.record.state == state
+            and result.record.boot_session_uuid == boot_session_uuid.lower()
+            and _metadata_sha256(result.record.installed_metadata) == _metadata_sha256(installed_metadata)
+        )

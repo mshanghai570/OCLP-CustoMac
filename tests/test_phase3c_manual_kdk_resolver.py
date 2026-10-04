@@ -179,6 +179,11 @@ class Phase3CStandardDownloadGUIFlowTests(unittest.TestCase):
 
 
 class Phase3CManualMergeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        lock = mock.patch("opencore_legacy_patcher.support.operation_lock.RootOperationLock")
+        lock.start()
+        self.addCleanup(lock.stop)
+
     def test_installed_manual_candidate_ignores_stale_download_and_reuses_exact_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             download = Path(temporary) / "stale.dmg"

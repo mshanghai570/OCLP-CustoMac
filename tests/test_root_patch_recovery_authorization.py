@@ -34,6 +34,9 @@ PATCHES = {"Modern Wireless": {}, "Modern Audio": {}}
 
 class RootPatchRecoveryAuthorizationTests(unittest.TestCase):
     def setUp(self) -> None:
+        lock = mock.patch("opencore_legacy_patcher.support.operation_lock.RootOperationLock")
+        lock.start()
+        self.addCleanup(lock.stop)
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary_directory.name)
         self.metadata_path = self.directory / ROOT_PATCH_METADATA_FILENAME
@@ -265,6 +268,7 @@ class RootPatchRecoveryAuthorizationTests(unittest.TestCase):
         patcher.constants = types.SimpleNamespace()
         patcher.patch_selection = None
         patcher._mount_root_vol = mock.Mock(return_value=True)
+        patcher._unmount_root_vol = mock.Mock()
         patcher._unpatch_root_vol = mock.Mock()
         detection = types.SimpleNamespace(
             patches=PATCHES,

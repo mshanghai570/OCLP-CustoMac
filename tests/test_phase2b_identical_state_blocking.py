@@ -25,6 +25,9 @@ PATCHES = {"Modern Wireless": {}, "Modern Audio": {}}
 
 class IdenticalStateBlockingTests(unittest.TestCase):
     def setUp(self) -> None:
+        lock = mock.patch("opencore_legacy_patcher.support.operation_lock.RootOperationLock")
+        lock.start()
+        self.addCleanup(lock.stop)
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.metadata_path = Path(self.temporary_directory.name) / "OpenCore-Legacy-Patcher.plist"
         self.constants = types.SimpleNamespace(

@@ -7,10 +7,13 @@ import plistlib
 import tempfile
 import subprocess
 import re
+import stat
+import shlex
 
 from pathlib import Path
 
 from ..datasets import os_data
+from .package_trust import PackageTrustError, Publisher, install_verified_package
 
 from . import (
     utilities,
@@ -78,6 +81,27 @@ class InstallerCreation():
     def __init__(self) -> None:
         pass
 
+    @staticmethod
+    def _bundle_inventory(bundle: Path) -> dict:
+        inventory = {}
+        if not bundle.is_dir() or bundle.is_symlink():
+            raise ValueError("Installer bundle is not a directory")
+        for path in bundle.rglob("*"):
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                entry = ("link", path.readlink().as_posix())
+            elif stat.S_ISDIR(info.st_mode):
+                entry = ("directory", 0)
+            elif stat.S_ISREG(info.st_mode):
+                entry = ("file", info.st_size)
+            else:
+                raise ValueError(f"Unsupported installer entry: {path}")
+            inventory[path.relative_to(bundle).as_posix()] = entry
+        for required in ("Contents/Info.plist", "Contents/Resources/createinstallmedia"):
+            if inventory.get(required, (None, 0))[0] != "file" or inventory[required][1] == 0:
+                raise ValueError(f"Installer is missing {required}")
+        return inventory
+
 
     def install_macOS_installer(self, download_path: str) -> bool:
         """
@@ -91,7 +115,11 @@ class InstallerCreation():
         """
 
         logging.info("Extracting macOS installer from InstallAssistant.pkg")
-        result = subprocess_wrapper.run_as_root(["/usr/sbin/installer", "-pkg", f"{Path(download_path)}/InstallAssistant.pkg", "-target", "/"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            result = install_verified_package(Path(download_path) / "InstallAssistant.pkg", Publisher.APPLE)
+        except PackageTrustError as error:
+            logging.error(f"Cannot install untrusted InstallAssistant package: {error}")
+            return False
         if result.returncode != 0:
             logging.info("Failed to install InstallAssistant")
             subprocess_wrapper.log(result)
@@ -101,7 +129,100 @@ class InstallerCreation():
         return True
 
 
-    def generate_installer_creation_script(self, tmp_location: str, installer_path: str, disk: str) -> bool:
+    @staticmethod
+    def _normalize_disk_identifier(disk: str) -> str:
+        if not isinstance(disk, str) or re.fullmatch(r"(?:/dev/)?disk[0-9]+", disk) is None:
+            raise ValueError("Expected a whole diskN device identifier")
+        return disk.removeprefix("/dev/")
+
+
+    @staticmethod
+    def _read_device_plist(arguments: list[str]):
+        result = subprocess.run(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode != 0:
+            raise ValueError("Device information command failed")
+        return plistlib.loads(result.stdout)
+
+
+    @classmethod
+    def _disk_identity(cls, disk: str) -> tuple[dict, dict]:
+        """Pin a physical attachment, even when whole-disk DiskUUID is absent.
+
+        IORegistryEntryID identifies this IOMedia attachment during the current
+        boot. A removal/replacement receives a different ID, including a cloned
+        USB with the same partition UUID. Never infer identity from diskN alone.
+        """
+        disk = cls._normalize_disk_identifier(disk)
+        info = cls._read_device_plist(["/usr/sbin/diskutil", "info", "-plist", disk])
+        if not isinstance(info, dict) or info.get("DeviceIdentifier") != disk or info.get("DeviceNode") != f"/dev/{disk}":
+            raise ValueError("Disk identifier changed")
+        if info.get("WholeDisk") is not True or info.get("Internal") is not False or info.get("VirtualOrPhysical") != "Physical":
+            raise ValueError("Disk is not an external whole physical device")
+        if type(info.get("TotalSize")) is not int or info["TotalSize"] <= 15032385536:
+            raise ValueError("Installer disk is too small or has unknown capacity")
+        for field in ("DeviceTreePath", "IORegistryEntryName"):
+            if not isinstance(info.get(field), str) or not info[field]:
+                raise ValueError("Disk has no trustworthy device fingerprint")
+        entries = cls._read_device_plist(["/usr/sbin/ioreg", "-a", "-r", "-c", "IOMedia"])
+        if not isinstance(entries, list):
+            raise ValueError("Missing IOMedia registry")
+        matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("BSD Name") == disk]
+        if len(matches) != 1:
+            raise ValueError("Missing or ambiguous disk attachment")
+        entry = matches[0]
+        if entry.get("Whole") is not True or type(entry.get("IORegistryEntryID")) is not int or entry["IORegistryEntryID"] <= 0:
+            raise ValueError("Disk attachment has no valid registry identity")
+        if entry.get("IORegistryEntryName") != info["IORegistryEntryName"]:
+            raise ValueError("Disk registry fingerprint changed")
+        boot = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.bootsessionuuid"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if boot.returncode != 0:
+            raise ValueError("Cannot establish disk attachment boot session")
+        boot_session = boot.stdout.decode("ascii").strip()
+        if re.fullmatch(r"[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}", boot_session) is None:
+            raise ValueError("Missing or invalid boot session UUID")
+        identity = {"boot_session_uuid": boot_session, "registry_id": entry["IORegistryEntryID"], "device_identifier": disk,
+                    "size": info["TotalSize"], "tree_path": info["DeviceTreePath"],
+                    "registry_name": info["IORegistryEntryName"]}
+        return info, identity
+
+
+    @staticmethod
+    def _disk_guard_script(disk: str, identity: dict) -> str:
+        quote = shlex.quote
+        checks = {"DeviceIdentifier": disk, "DeviceNode": f"/dev/{disk}", "WholeDisk": "true",
+                  "Internal": "false", "VirtualOrPhysical": "Physical", "TotalSize": str(identity["size"]),
+                  "DeviceTreePath": identity["tree_path"], "IORegistryEntryName": identity["registry_name"]}
+        script = """#!/bin/bash
+set -e
+fail_disk() { /bin/echo "Installer disk identity changed or cannot be verified" >&2; exit 1; }
+check_dir=$(/usr/bin/mktemp -d /private/tmp/oclp-installer.XXXXXX) || fail_disk
+trap '/bin/rm -rf "$check_dir"' EXIT
+/usr/sbin/diskutil info -plist """ + quote(disk) + """ > "$check_dir/disk.plist" || fail_disk
+field() { /usr/libexec/PlistBuddy -c "Print :$1" "$check_dir/disk.plist" 2>/dev/null; }
+"""
+        for field, value in checks.items():
+            script += f'[ "$(field {quote(field)})" = {quote(value)} ] || fail_disk\n'
+        script += """/usr/sbin/ioreg -a -r -c IOMedia > "$check_dir/registry.plist" || fail_disk
+registry_field() { /usr/libexec/PlistBuddy -c "Print :$1:'$2'" "$check_dir/registry.plist" 2>/dev/null; }
+index=0
+matches=0
+while /usr/libexec/PlistBuddy -c "Print :$index" "$check_dir/registry.plist" >/dev/null 2>&1; do
+    if [ "$(registry_field "$index" 'BSD Name')" = """ + quote(disk) + """ ]; then
+        matches=$((matches + 1))
+        [ "$(registry_field "$index" Whole)" = true ] || fail_disk
+        [ "$(registry_field "$index" IORegistryEntryID)" = """ + quote(str(identity["registry_id"])) + """ ] || fail_disk
+        [ "$(registry_field "$index" IORegistryEntryName)" = """ + quote(identity["registry_name"]) + """ ] || fail_disk
+    fi
+    index=$((index + 1))
+done
+[ "$matches" -eq 1 ] || fail_disk
+"""
+        script += 'current_boot=$(/usr/sbin/sysctl -n kern.bootsessionuuid) || fail_disk\n'
+        script += f'[ "$current_boot" = {quote(identity["boot_session_uuid"])} ] || fail_disk\n'
+        return script
+
+
+    def generate_installer_creation_script(self, tmp_location: str, installer_path: str, disk: str, expected_identity: dict = None) -> bool:
         """
         Creates installer.sh to be piped to OCLP-Helper and run as admin
 
@@ -121,6 +242,11 @@ class InstallerCreation():
             bool: True if successful, False otherwise
         """
 
+        try:
+            disk = self._normalize_disk_identifier(disk)
+        except ValueError as error:
+            logging.error(str(error))
+            return False
         additional_args = ""
         script_location = Path(tmp_location) / Path("Installer.sh")
 
@@ -135,27 +261,42 @@ class InstallerCreation():
         global tmp_dir
         ia_tmp = tmp_dir.name
 
+        try:
+            source_inventory = self._bundle_inventory(Path(installer_path))
+        except (OSError, ValueError) as error:
+            logging.error(f"Cannot inspect installer bundle: {error}")
+            return False
+
         logging.info(f"Creating temporary directory at {ia_tmp}")
         # Delete all files in tmp_dir
         for file in Path(ia_tmp).glob("*"):
-            subprocess.run(["/bin/rm", "-rf", str(file)])
+            if subprocess.run(["/bin/rm", "-rf", str(file)]).returncode != 0:
+                logging.error("Failed to clear installer staging directory")
+                return False
 
         # Copy installer to tmp
         if can_copy_on_write(installer_path, ia_tmp) is False:
             # Ensure we have enough space for the duplication when CoW is not supported
-            space_available = utilities.get_free_space()
-            space_needed = Path(ia_tmp).stat().st_size
+            space_available = utilities.get_free_space(str(ia_tmp))
+            space_needed = sum((size + 4095) // 4096 * 4096 for kind, size in source_inventory.values() if kind == "file") + 128 * 1024**2
             if space_available < space_needed:
                 logging.info("Not enough free space to create installer.sh")
                 logging.info(f"{utilities.human_fmt(space_available)} available, {utilities.human_fmt(space_needed)} required")
                 return False
 
-        subprocess.run(generate_copy_arguments(installer_path, ia_tmp))
+        if subprocess.run(generate_copy_arguments(installer_path, ia_tmp)).returncode != 0:
+            logging.error("Failed to copy macOS installer; script generation cancelled")
+            return False
 
         # Adjust installer_path to point to the copied installer
         installer_path = Path(ia_tmp) / Path(Path(installer_path).name)
-        if not Path(installer_path).exists():
-            logging.info(f"Failed to copy installer to {ia_tmp}")
+        try:
+            copied_inventory = self._bundle_inventory(installer_path)
+        except (OSError, ValueError) as error:
+            logging.error(f"Copied installer is incomplete: {error}")
+            return False
+        if copied_inventory != source_inventory:
+            logging.error("Copied installer does not match the source bundle inventory")
             return False
 
         # Verify code signature before executing
@@ -170,22 +311,21 @@ class InstallerCreation():
                 plist = plistlib.load(plist_file)
             if "DTPlatformVersion" in plist:
                 if _requires_applicationpath(plist["DTPlatformVersion"]):
-                    additional_args = f" --applicationpath '{installer_path}'"
+                    additional_args = f" --applicationpath {shlex.quote(str(installer_path))}"
 
-        if script_location.exists():
-            script_location.unlink()
-        script_location.touch()
+        try:
+            _, identity = self._disk_identity(disk)
+            if expected_identity is not None and identity != expected_identity:
+                raise ValueError("Selected disk attachment changed before preparation")
+        except (OSError, ValueError, TypeError, plistlib.InvalidFileException) as error:
+            logging.error(f"Cannot verify installer disk: {error}")
+            return False
 
-        with script_location.open("w") as script:
-            script.write(f'''#!/bin/bash
-erase_disk='/usr/sbin/diskutil eraseDisk HFS+ OCLP-Installer {disk}'
-if $erase_disk; then
-    "{createinstallmedia_path}" --volume /Volumes/OCLP-Installer --nointeraction{additional_args}
-fi
-            ''')
-        if Path(script_location).exists():
-            return True
-        return False
+        script = self._disk_guard_script(disk, identity)
+        script += f"/usr/sbin/diskutil eraseDisk HFS+ OCLP-Installer {shlex.quote(disk)}\n"
+        script += f"{shlex.quote(createinstallmedia_path)} --volume /Volumes/OCLP-Installer --nointeraction{additional_args}\n"
+        script_location.write_text(script)
+        return script_location.is_file()
 
 
     def list_disk_to_format(self) -> dict:
@@ -202,50 +342,25 @@ fi
             dict: Dictionary of disks
         """
 
-        all_disks:  dict = {}
-        list_disks: dict = {}
-
-        # TODO: AllDisksAndPartitions is not supported in Snow Leopard and older
+        list_disks = {}
         try:
-            # High Sierra and newer
-            disks = plistlib.loads(subprocess.run(["/usr/sbin/diskutil", "list", "-plist", "physical"], stdout=subprocess.PIPE).stdout.decode().strip().encode())
-        except ValueError:
-            # Sierra and older
-            disks = plistlib.loads(subprocess.run(["/usr/sbin/diskutil", "list", "-plist"], stdout=subprocess.PIPE).stdout.decode().strip().encode())
-
-        for disk in disks["AllDisksAndPartitions"]:
             try:
-                disk_info = plistlib.loads(subprocess.run(["/usr/sbin/diskutil", "info", "-plist", disk["DeviceIdentifier"]], stdout=subprocess.PIPE).stdout.decode().strip().encode())
-            except:
-                # Chinesium USB can have garbage data in MediaName
-                diskutil_output = subprocess.run(["/usr/sbin/diskutil", "info", "-plist", disk["DeviceIdentifier"]], stdout=subprocess.PIPE).stdout.decode().strip()
-                ungarbafied_output = re.sub(r'(<key>MediaName</key>\s*<string>).*?(</string>)', r'\1\2', diskutil_output).encode()
-                disk_info = plistlib.loads(ungarbafied_output)
-            try:
-                all_disks[disk["DeviceIdentifier"]] = {"identifier": disk_info["DeviceNode"], "name": disk_info.get("MediaName", "Disk"), "size": disk_info["TotalSize"], "removable": disk_info["Internal"], "partitions": {}}
-            except KeyError:
-                # Avoid crashing with CDs installed
-                continue
-
-        for disk in all_disks:
-            # Strip disks that are under 14GB (15,032,385,536 bytes)
-            # createinstallmedia isn't great at detecting if a disk has enough space
-            if not any(all_disks[disk]['size'] > 15032385536 for partition in all_disks[disk]):
-                continue
-            # Strip internal disks as well (avoid user formatting their SSD/HDD)
-            # Ensure user doesn't format their boot drive
-            if not any(all_disks[disk]['removable'] is False for partition in all_disks[disk]):
-                continue
-
-            list_disks.update({
-                disk: {
-                    "identifier": all_disks[disk]["identifier"],
-                    "name": all_disks[disk]["name"],
-                    "size": all_disks[disk]["size"],
+                disks = self._read_device_plist(["/usr/sbin/diskutil", "list", "-plist", "physical"])
+            except (ValueError, plistlib.InvalidFileException):
+                disks = self._read_device_plist(["/usr/sbin/diskutil", "list", "-plist"])
+            for disk in disks["AllDisksAndPartitions"]:
+                try:
+                    info, identity = self._disk_identity(disk["DeviceIdentifier"])
+                except (OSError, ValueError, TypeError, KeyError, plistlib.InvalidFileException):
+                    continue
+                list_disks[info["DeviceIdentifier"]] = {
+                    "identifier": info["DeviceNode"], "name": info.get("MediaName", "Disk"),
+                    "size": info["TotalSize"], "identity": identity,
                 }
-            })
-
+        except (OSError, ValueError, TypeError, KeyError, plistlib.InvalidFileException) as error:
+            logging.error(f"Cannot enumerate installer disks safely: {error}")
         return list_disks
+
 
 
 class LocalInstallerCatalog:

@@ -383,14 +383,19 @@ class macOSInstallerDownloadFrame(wx.Frame):
         def extract_installer():
             self.result = macos_installer_handler.InstallerCreation().install_macOS_installer(self.constants.payload_path)
 
-        thread = threading.Thread(target=extract_installer)
+        thread = gui_support.ResultThread(target=extract_installer)
         thread.start()
 
         # Show frame
         self.Show()
 
-        # Wait for thread to finish
-        gui_support.wait_for_thread(thread)
+        # Observe worker failure before offering installer creation.
+        try:
+            gui_support.wait_for_thread(thread)
+        except Exception as error:
+            self.result = False
+            logging.exception("macOS installer extraction stopped")
+            wx.MessageBox(str(error), "Installer extraction stopped", wx.OK | wx.ICON_ERROR)
 
         progress_bar_animation.stop_pulse()
         progress_bar.Hide()

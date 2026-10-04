@@ -27,7 +27,8 @@ from ..support import (
     network_handler,
     kdk_handler,
     metallib_handler,
-    subprocess_wrapper
+    subprocess_wrapper,
+    package_trust
 )
 
 
@@ -274,7 +275,7 @@ class macOSInstallerFlashFrame(wx.Frame):
         self.Show()
 
         # Prepare resources
-        if self._prepare_resources(installer['Path'], disk['identifier']) is False:
+        if self._prepare_resources(installer['Path'], disk['identifier'], disk.get('identity')) is False:
             logging.error("Failed to prepare resources, cannot continue.")
             wx.MessageBox("Failed to prepare resources, cannot continue.", "Error", wx.OK | wx.ICON_ERROR)
             self.on_return_to_main_menu()
@@ -298,7 +299,7 @@ class macOSInstallerFlashFrame(wx.Frame):
             logging.info(f"Flashing {installer['Path']} to {root_disk}")
             self.result = self._flash_installer(root_disk)
 
-        thread = threading.Thread(target=_flash)
+        thread = gui_support.ResultThread(target=_flash)
         thread.start()
 
         # Wait for installer to be created
@@ -317,6 +318,13 @@ class macOSInstallerFlashFrame(wx.Frame):
 
             wx.Yield()
             thread.join(timeout=self.constants.thread_sleep_interval)
+
+        try:
+            thread.result()
+        except Exception as error:
+            self.result = False
+            logging.exception("Installer creation stopped")
+            wx.MessageBox(str(error), "Installer creation stopped", wx.OK | wx.ICON_ERROR)
 
         if self.result is False:
             logging.error("Failed to flash installer, cannot continue.")
@@ -361,24 +369,32 @@ class macOSInstallerFlashFrame(wx.Frame):
         self.Destroy()
 
 
-    def _prepare_resources(self, installer_path: str, disk: str) -> None:
-
-        def prepare_script(self, installer_path: str, disk: str, constants: constants.Constants):
-            self.prepare_result = macos_installer_handler.InstallerCreation().generate_installer_creation_script(constants.payload_path, installer_path, disk)
-
-        thread = threading.Thread(target=prepare_script, args=(self, installer_path, disk, self.constants))
+    def _prepare_resources(self, installer_path: str, disk: str, expected_identity: dict = None) -> bool:
+        thread = gui_support.ResultThread(
+            target=macos_installer_handler.InstallerCreation().generate_installer_creation_script,
+            args=(self.constants.payload_path, installer_path, disk),
+            kwargs={"expected_identity": expected_identity},
+        )
         thread.start()
-
-        gui_support.wait_for_thread(thread)
-
-        return self.prepare_result
+        try:
+            return gui_support.wait_for_thread(thread)
+        except Exception:
+            logging.exception("Installer preparation failed")
+            return False
 
 
     def _flash_installer(self, disk) -> bool:
         utilities.disable_sleep_while_running()
+        try:
+            return self._flash_installer_awake(disk)
+        finally:
+            utilities.enable_sleep_after_running()
+
+
+    def _flash_installer_awake(self, disk) -> bool:
         logging.info("Creating macOS installer")
 
-        thread = threading.Thread(target=self._auto_package_handler)
+        thread = gui_support.ResultThread(target=self._auto_package_handler)
         thread.start()
 
         # print contents of installer.sh
@@ -390,7 +406,7 @@ class macOSInstallerFlashFrame(wx.Frame):
         output = result.stdout
         error  = result.stderr if result.stderr else ""
 
-        if "Install media now available at" not in output:
+        if result.returncode != 0 or "Install media now available at" not in output:
             logging.info("Failed to create macOS installer")
             popup = wx.MessageDialog(self, f"Failed to create macOS installer\n\nOutput: {output}\n\nError: {error}", "Error", wx.OK | wx.ICON_ERROR)
             popup.ShowModal()
@@ -405,50 +421,42 @@ class macOSInstallerFlashFrame(wx.Frame):
         logging.info("Installing Root Patcher to drive")
         self._install_installer_pkg(disk)
 
-        utilities.enable_sleep_after_running()
         return True
 
 
     def _auto_package_handler(self):
-        """
-        Function's main goal is to grab the correct AutoPkg-Assets.pkg and unzip it
-        Note the following:
-            - When running a release build, pull from Github's release page with the same versioning
-            - When running from source/unable to find on Github, use the nightly.link variant
-            - If nightly also fails, fall back to the manually uploaded variant
-        """
+        """Download optional root-patch assets only from a verified project release."""
+        self._verified_auto_package = None
         link = self.constants.installer_pkg_url
-        if network_handler.NetworkUtilities(link).validate_link() is False:
-            logging.info("Stock Install.pkg is missing on Github, falling back to CI build artifact")
-            link = self.constants.installer_pkg_url_nightly
-
-        if link.endswith(".zip"):
-            path = self.constants.installer_pkg_zip_path
-        else:
-            path = self.constants.installer_pkg_path
-
-        autopkg_download = network_handler.DownloadObject(link, path)
-        autopkg_download.download(spawn_thread=False)
-
-        if autopkg_download.download_complete is False:
-            logging.warning("Failed to download Install.pkg")
-            logging.warning(autopkg_download.error_msg)
-            return
-
-        # Download thread will re-enable Idle Sleep after downloading
-        utilities.disable_sleep_while_running()
-        if not str(path).endswith(".zip"):
-            return
-        if Path(self.constants.installer_pkg_path).exists():
-            subprocess.run(["/bin/rm", self.constants.installer_pkg_path])
-        subprocess.run(["/usr/bin/ditto", "-V", "-x", "-k", "--sequesterRsrc", "--rsrc", self.constants.installer_pkg_zip_path, self.constants.payload_path])
+        try:
+            if not link.endswith(".pkg"):
+                raise package_trust.PackageTrustError("Automatic patch assets require a published release package")
+            download = network_handler.DownloadObject(link, self.constants.installer_pkg_path)
+            download.download(spawn_thread=False)
+            if not download.download_complete:
+                raise RuntimeError(download.error_msg)
+            digest = package_trust.verify_installer_package(
+                self.constants.installer_pkg_path, package_trust.Publisher.PROJECT, source_url=link
+            )
+            self._verified_auto_package = (link, digest)
+            return True
+        except Exception as error:
+            logging.warning("Automatic root-patch assets unavailable: %s", error)
+            return False
 
 
     def _install_installer_pkg(self, disk):
         disk = disk + "s2" # ESP sits at 1, and we know macOS will have created the main partition at 2
 
-        if not Path(self.constants.installer_pkg_path).exists():
+        verified = getattr(self, "_verified_auto_package", None)
+        if verified is None:
+            logging.info("macOS installer created without automatic root-patch assets")
             return
+        digest = package_trust.verify_installer_package(
+            self.constants.installer_pkg_path, package_trust.Publisher.PROJECT, source_url=verified[0]
+        )
+        if digest != verified[1]:
+            raise package_trust.PackageTrustError("Automatic root-patch assets changed")
 
         path = utilities.grab_mount_point_from_disk(disk)
         if not Path(path + "/System/Library/CoreServices/SystemVersion.plist").exists():
@@ -462,7 +470,12 @@ class macOSInstallerFlashFrame(wx.Frame):
             return
 
         subprocess.run(["/bin/mkdir", "-p", f"{path}/Library/Packages/"])
-        subprocess.run(generate_copy_arguments(self.constants.installer_pkg_path, f"{path}/Library/Packages/"))
+        result = subprocess.run(generate_copy_arguments(self.constants.installer_pkg_path, f"{path}/Library/Packages/"), capture_output=True)
+        subprocess_wrapper.verify(result)
+        copied = Path(path) / "Library/Packages" / Path(self.constants.installer_pkg_path).name
+        if package_trust._digest(copied) != digest:
+            copied.unlink(missing_ok=True)
+            raise package_trust.PackageTrustError("Copied automatic root-patch package failed verification")
 
         # Chainload KDK and Metallib
         self._chainload_metallib(os_version["ProductBuildVersion"], os_version["ProductVersion"], Path(path + "/Library/Packages/"))

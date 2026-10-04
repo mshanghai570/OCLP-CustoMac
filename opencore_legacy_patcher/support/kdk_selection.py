@@ -61,6 +61,22 @@ class KDKSelectionMode(StrEnum):
     MANUAL = "MANUAL"
 
 
+CATALOG_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+
+
+def catalog_sha256(entry: object) -> str | None:
+    """Return the catalog-published SHA-256 for a KDK asset when it is usable."""
+    if not isinstance(entry, dict):
+        return None
+    digest = entry.get("sha256sum")
+    if not isinstance(digest, str):
+        return None
+    digest = digest.strip()
+    if CATALOG_SHA256_PATTERN.fullmatch(digest) is None:
+        return None
+    return digest.lower()
+
+
 @dataclass(frozen=True)
 class KernelDebugKitIdentity:
     """Exact installed KDK identity used by one completed patch operation."""
@@ -117,6 +133,7 @@ class KernelDebugKitCandidate:
     build: str
     url: str
     file_size: int
+    sha256: str | None = None
 
     @classmethod
     def from_catalog_entry(cls, entry: dict) -> KernelDebugKitCandidate:
@@ -125,6 +142,7 @@ class KernelDebugKitCandidate:
             build=str(entry["build"]),
             url=str(entry["url"]),
             file_size=int(entry["fileSize"]),
+            sha256=catalog_sha256(entry),
         )
 
     def catalog_identity(self) -> tuple[str, str, str, int]:

@@ -30,13 +30,12 @@ def install_new_file(source_folder: Path, destination_folder: Path, file_name: s
     file_name_str = str(file_name)
 
     if not Path(destination_folder).exists():
-        logging.info(f"  - Skipping {file_name}, cannot locate {source_folder}")
-        return
+        raise FileNotFoundError(f"Required destination directory not found: {destination_folder}")
 
     if method in [PatchType.MERGE_SYSTEM_VOLUME, PatchType.MERGE_DATA_VOLUME]:
         # merge with rsync
         logging.info(f"  - Installing: {file_name}")
-        subprocess_wrapper.run_as_root(["/usr/bin/rsync", "-r", "-i", "-a", f"{source_folder}/{file_name}", f"{destination_folder}/"], stdout=subprocess.PIPE)
+        subprocess_wrapper.run_as_root_and_verify(["/usr/bin/rsync", "-r", "-i", "-a", f"{source_folder}/{file_name}", f"{destination_folder}/"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         fix_permissions(destination_folder + "/" + file_name)
     elif Path(source_folder + "/" + file_name_str).is_dir():
         # Applicable for .kext, .app, .plugin, .bundle, all of which are directories

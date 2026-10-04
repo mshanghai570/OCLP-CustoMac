@@ -37,17 +37,20 @@ def fetch_release_changelog(releases_url: str = REPO_LATEST_RELEASE_URL) -> str:
         str: Release notes, or the fallback text when they are unavailable
     """
 
-    response = requests.get(releases_url)
+    response = None
     try:
+        response = requests.get(releases_url, timeout=network_handler.DEFAULT_REQUEST_TIMEOUT)
+        response.raise_for_status()
         payload = response.json()
-    finally:
-        response.close()
-
-    try:
-        return payload["body"].split("## Asset Information")[0]
-    except:
-        # Anonymous requests are rate limited, and a limited response carries no body
+        body = payload.get("body") if isinstance(payload, dict) else None
+        if isinstance(body, str):
+            return body.split("## Asset Information")[0]
         return CHANGELOG_FALLBACK
+    except (requests.exceptions.RequestException, ValueError, TypeError):
+        return CHANGELOG_FALLBACK
+    finally:
+        if response is not None:
+            response.close()
 
 
 class CheckBinaryUpdates:
@@ -127,9 +130,10 @@ class CheckBinaryUpdates:
 
         response = network_handler.NetworkUtilities().get(REPO_LATEST_RELEASE_URL)
         try:
+            response.raise_for_status()
             data_set = response.json()
 
-            if "tag_name" not in data_set:
+            if not isinstance(data_set, dict) or not isinstance(data_set.get("tag_name"), str):
                 return None
 
             # The release marked as latest will always be stable, and thus, have a proper version number
@@ -142,9 +146,14 @@ class CheckBinaryUpdates:
             if not self._check_if_build_newer(latest_remote_version, self.binary_version):
                 return None
 
-            for asset in data_set["assets"]:
+            assets = data_set.get("assets")
+            if not isinstance(assets, list):
+                return None
+            for asset in assets:
+                if not isinstance(asset, dict) or not isinstance(asset.get("name"), str):
+                    continue
                 logging.info(f"Found asset: {asset['name']}")
-                if asset["name"] == "OpenCore-Patcher.pkg":
+                if asset["name"] == "OpenCore-Patcher.pkg" and isinstance(asset.get("browser_download_url"), str) and asset["browser_download_url"]:
                     self.latest_details = {
                         "Name": asset["name"],
                         "Version": latest_remote_version,
@@ -153,6 +162,8 @@ class CheckBinaryUpdates:
                     }
                     return self.latest_details
 
+            return None
+        except (requests.exceptions.RequestException, ValueError, TypeError):
             return None
         finally:
             response.close()

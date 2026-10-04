@@ -137,6 +137,11 @@ class GeneratedScriptTests(unittest.TestCase):
             with mock.patch.object(
                      macos_installer_handler, "tmp_dir", SimpleNamespace(name=installer_root)
                  ), \
+                 mock.patch.object(macos_installer_handler.InstallerCreation, "_disk_identity", return_value=({}, {
+                     "boot_session_uuid": "12345678-1234-5678-1234-567812345678",
+                     "registry_id": 1234, "size": 32 * 1024**3,
+                     "tree_path": "IODeviceTree:/USB@1", "registry_name": "USB Media",
+                 })), \
                  mock.patch.object(macos_installer_handler, "can_copy_on_write", return_value=True), \
                  mock.patch.object(macos_installer_handler, "generate_copy_arguments", return_value=["/bin/cp"]), \
                  mock.patch.object(

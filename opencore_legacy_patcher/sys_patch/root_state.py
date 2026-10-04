@@ -41,6 +41,7 @@ class RootPatchState(StrEnum):
     PATCH_IN_PROGRESS = "patch-in-progress"
     PATCH_FAILED_RECOVERY_REQUIRED = "patch-failed-recovery-required"
     PATCH_PENDING_REBOOT = "patch-pending-reboot-required"
+    REVERT_IN_PROGRESS = "revert-in-progress"
     INSTALLED_SAME = "installed-same"
     INSTALLED_DIFFERENT_PATCH_SET = "installed-different-patch-set"
     INSTALLED_DIFFERENT_BUILD = "installed-different-build"
@@ -345,6 +346,11 @@ class RootPatchStateEvaluator:
             True,
         )
         installed_selection, kdk_mode, kdk_identity = self._trusted_installed_history(metadata)
+        if lifecycle_state == RootPatchLifecycleState.REVERT_IN_PROGRESS:
+            return self._result(
+                RootPatchState.REVERT_IN_PROGRESS,
+                "Snapshot recovery was started but its outcome is unconfirmed; finish recovery before patching",
+            )
         if lifecycle_state == RootPatchLifecycleState.REVERT_PENDING:
             return self._result(
                 RootPatchState.REVERT_PENDING,

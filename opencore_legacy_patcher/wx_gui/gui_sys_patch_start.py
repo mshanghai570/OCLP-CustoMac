@@ -467,20 +467,28 @@ class SysPatchStartFrame(wx.Frame):
         self._generate_modal(self.patches, "Root Patching")
         self.return_button.Disable()
 
-        thread = threading.Thread(target=self._start_root_patching, args=(self.patches,))
+        thread = gui_support.ResultThread(target=self._start_root_patching, args=(self.patches,))
         thread.start()
 
-        gui_support.wait_for_thread(thread)
-
-        self._post_patch()
-        self.return_button.Enable()
+        try:
+            succeeded = gui_support.wait_for_thread(thread)
+            if succeeded is False:
+                self.constants.root_patcher_succeeded = False
+            self._post_patch()
+        except Exception as error:
+            self.constants.root_patcher_succeeded = False
+            logging.exception("Root patch operation stopped")
+            wx.MessageBox(str(error), "Root patch operation stopped", wx.OK | wx.ICON_ERROR)
+        finally:
+            self.return_button.Enable()
 
 
     def _start_root_patching(self, patches: dict):
         logger = logging.getLogger()
-        logger.addHandler(gui_support.ThreadHandler(self.text_box))
+        handler = gui_support.ThreadHandler(self.text_box)
+        logger.addHandler(handler)
         try:
-            sys_patch.PatchSysVolume(
+            return sys_patch.PatchSysVolume(
                 self.constants.computer.real_model,
                 self.constants,
                 patches,
@@ -488,10 +496,9 @@ class SysPatchStartFrame(wx.Frame):
                 expected_patch_selection=self.expected_patch_selection,
                 manual_kdk_candidate=self.manual_kdk_candidate,
             ).start_patch()
-        except:
-            logging.error("An internal error occurred while running the Root Patcher:\n")
-            logging.error(traceback.format_exc())
-        logger.removeHandler(logger.handlers[2])
+        finally:
+            logger.removeHandler(handler)
+            handler.close()
 
 
     def revert_root_patching(self):
@@ -500,29 +507,36 @@ class SysPatchStartFrame(wx.Frame):
         self._generate_modal(self.patches, "Revert Root Patches")
         self.return_button.Disable()
 
-        thread = threading.Thread(target=self._revert_root_patching, args=(self.patches,))
+        thread = gui_support.ResultThread(target=self._revert_root_patching, args=(self.patches,))
         thread.start()
 
-        gui_support.wait_for_thread(thread)
-
-        self._post_patch()
-        self.return_button.Enable()
+        try:
+            succeeded = gui_support.wait_for_thread(thread)
+            if succeeded is False:
+                self.constants.root_patcher_succeeded = False
+            self._post_patch()
+        except Exception as error:
+            self.constants.root_patcher_succeeded = False
+            logging.exception("Root patch operation stopped")
+            wx.MessageBox(str(error), "Root patch operation stopped", wx.OK | wx.ICON_ERROR)
+        finally:
+            self.return_button.Enable()
 
 
     def _revert_root_patching(self, patches: dict):
         logger = logging.getLogger()
-        logger.addHandler(gui_support.ThreadHandler(self.text_box))
+        handler = gui_support.ThreadHandler(self.text_box)
+        logger.addHandler(handler)
         try:
-            sys_patch.PatchSysVolume(
+            return sys_patch.PatchSysVolume(
                 self.constants.computer.real_model,
                 self.constants,
                 patches,
                 unpatching=True,
             ).start_unpatch()
-        except:
-            logging.error("An internal error occurred while running the Root Patcher:\n")
-            logging.error(traceback.format_exc())
-        logger.removeHandler(logger.handlers[2])
+        finally:
+            logger.removeHandler(handler)
+            handler.close()
 
 
     def on_return_to_main_menu(self, event: wx.Event = None):
@@ -547,6 +561,11 @@ class SysPatchStartFrame(wx.Frame):
 
 
     def _post_patch(self):
+        if getattr(self.constants, "root_patcher_revert_pending", False) and getattr(self.constants, "root_patcher_cleanup_incomplete", False):
+            gui_support.RestartHost(self.frame_modal).restart(
+                message="The boot snapshot was restored, but some recovery cleanup could not be completed.\n\nReboot is required before further patching. Would you like to reboot now?"
+            )
+            return
         if self.constants.root_patcher_succeeded is False:
             return
 

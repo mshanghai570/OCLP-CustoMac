@@ -1,5 +1,5 @@
 """
-integrity_verification.py: Validate the integrity of Apple downloaded files via .chunklist and .integrityDataV1 files
+integrity_verification.py: Check file consistency against .chunklist and .integrityDataV1 manifests
 
 Based off of chunklist.py:
 - https://gist.github.com/dhinakg/cbe30edf31ddc153fd0b0c0570c9b041
@@ -10,11 +10,14 @@ import hashlib
 import logging
 import binascii
 import threading
+import os
 
 from typing import Union
 from pathlib import Path
 
 CHUNK_LENGTH = 4 + 32
+HEADER_LENGTH = 36
+SIGNATURE_LENGTHS = {1: 256, 3: 808}
 
 
 class ChunklistStatus(enum.Enum):
@@ -28,9 +31,15 @@ class ChunklistStatus(enum.Enum):
 
 class ChunklistVerification:
     """
-    Library to validate Apple's files against their chunklist format
+    Check file consistency against Apple's chunklist format.
     Supports both chunklist and integrityDataV1 files
     - Ref: https://github.com/apple-oss-distributions/xnu/blob/xnu-8020.101.4/bsd/kern/chunklist.h
+
+    Trust policy: SUCCESS means every byte matches the supplied manifest. This
+    class checks the signature trailer's size, but does not authenticate it
+    against Apple public keys. Callers must obtain the manifest through trusted
+    HTTPS metadata/transport, and independently verify the publisher before
+    installing executable content. An untrusted file and manifest can agree.
 
     Parameters:
         file_path      (Path): Path to the file to validate
@@ -53,24 +62,33 @@ class ChunklistVerification:
             self.chunklist_path: Path = Path(chunklist_path)
         self.file_path:          Path = Path(file_path)
 
-        self.chunks: dict = self._generate_chunks(self.chunklist_path)
-
         self.error_msg:     str = ""
         self.current_chunk: int = 0
-        self.total_chunks:  int = len(self.chunks)
-
         self.status: ChunklistStatus = ChunklistStatus.IN_PROGRESS
+        self.publisher_authenticated: bool = False
+        self.verification_scope: str = "File consistency with supplied chunklist; publisher not authenticated"
+        self.chunks: list[dict] | None = None
+        try:
+            self.chunks = self._generate_chunks(self.chunklist_path)
+        except (OSError, ValueError) as error:
+            self.error_msg = f"Unable to read chunklist: {error}"
+        if self.chunks is None:
+            self.error_msg = self.error_msg or "Invalid or truncated chunklist header"
+            self.status = ChunklistStatus.FAILURE
+        self.total_chunks: int = len(self.chunks or [])
 
 
-    def _generate_chunks(self, chunklist: Union[Path, bytes]) -> dict:
+    def _generate_chunks(self, chunklist: Union[Path, bytes]) -> list[dict] | None:
         """
-        Generate a dictionary of the chunklist header and chunks
+        Generate chunk records, or return None for an invalid header
 
         Parameters:
             chunklist (Path | bytes): Path to the chunklist file or the chunklist file itself
         """
 
         chunklist: bytes = chunklist if isinstance(chunklist, bytes) else chunklist.read_bytes()
+        if len(chunklist) < HEADER_LENGTH:
+            return None
 
         # Ref: https://github.com/apple-oss-distributions/xnu/blob/xnu-8020.101.4/bsd/kern/chunklist.h#L59-L69
         header: dict = {
@@ -79,21 +97,43 @@ class ChunklistVerification:
             "fileVersion": chunklist[8],
             "chunkMethod": chunklist[9],
             "sigMethod":   chunklist[10],
+            "reserved":    chunklist[11],
             "chunkCount":  int.from_bytes(chunklist[12:20], "little"),
             "chunkOffset": int.from_bytes(chunklist[20:28], "little"),
             "sigOffset":   int.from_bytes(chunklist[28:36], "little")
         }
 
-        if header["magic"] != b"CNKL":
+        if (header["magic"] != b"CNKL" or header["length"] != HEADER_LENGTH
+                or header["fileVersion"] != 1 or header["chunkMethod"] != 1
+                or header["sigMethod"] not in SIGNATURE_LENGTHS or header["reserved"] != 0):
             return None
 
-        all_chunks = chunklist[header["chunkOffset"]:header["chunkOffset"]+header["chunkCount"]*CHUNK_LENGTH]
+        chunks_end = header["chunkOffset"] + header["chunkCount"] * CHUNK_LENGTH
+        signature_end = header["sigOffset"] + SIGNATURE_LENGTHS[header["sigMethod"]]
+        if (header["chunkCount"] == 0 or header["chunkOffset"] < HEADER_LENGTH
+                or chunks_end > len(chunklist) or header["sigOffset"] < chunks_end
+                or signature_end != len(chunklist)):
+            return None
+
+        all_chunks = chunklist[header["chunkOffset"]:chunks_end]
         chunks = [{"length": int.from_bytes(all_chunks[i:i+4], "little"), "checksum": all_chunks[i+4:i+CHUNK_LENGTH]} for i in range(0, len(all_chunks), CHUNK_LENGTH)]
+        if len(chunks) != header["chunkCount"] or any(chunk["length"] == 0 for chunk in chunks):
+            return None
 
         return chunks
 
 
     def _validate(self) -> None:
+        """Ensure worker I/O failures produce a terminal status for GUI callers."""
+        try:
+            self._validate_file()
+        except (OSError, ValueError) as error:
+            self.error_msg = f"Unable to validate {self.file_path}: {error}"
+            self.status = ChunklistStatus.FAILURE
+            logging.info(self.error_msg)
+
+
+    def _validate_file(self) -> None:
         """
         Validates provided file against chunklist
         """
@@ -115,16 +155,32 @@ class ChunklistVerification:
             return
 
         with self.file_path.open("rb") as f:
+            covered_size = sum(chunk["length"] for chunk in self.chunks)
+            if os.fstat(f.fileno()).st_size != covered_size:
+                raise ValueError("Chunklist does not cover the complete file")
+            self.current_chunk = 0
             for chunk in self.chunks:
                 self.current_chunk += 1
-                status = hashlib.sha256(f.read(chunk["length"])).digest()
+                digest = hashlib.sha256()
+                remaining = chunk["length"]
+                while remaining:
+                    data = f.read(min(remaining, 1024 * 1024))
+                    if not data:
+                        raise ValueError(f"Truncated file at chunk {self.current_chunk}")
+                    digest.update(data)
+                    remaining -= len(data)
+                status = digest.digest()
                 if status != chunk["checksum"]:
                     self.error_msg = f"Chunk {self.current_chunk} checksum status FAIL: chunk sum {binascii.hexlify(chunk['checksum']).decode()}, calculated sum {binascii.hexlify(status).decode()}"
                     self.status = ChunklistStatus.FAILURE
                     logging.info(self.error_msg)
                     return
 
+            if f.read(1) or os.fstat(f.fileno()).st_size != covered_size:
+                raise ValueError("Unexpected bytes after the final chunk")
+
         self.status = ChunklistStatus.SUCCESS
+        logging.info(self.verification_scope)
 
 
     def validate(self) -> None:

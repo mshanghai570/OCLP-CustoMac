@@ -8,6 +8,7 @@ import logging
 import plistlib
 import threading
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 from pathlib import Path
 
@@ -95,15 +96,24 @@ class arguments:
         """
 
         logging.info("Set System Volume patching")
-        if "Library/InstallerSandboxes/" in str(self.constants.payload_path):
-            logging.info("- Running from Installer Sandbox, blocking OS updaters")
-            thread = threading.Thread(target=sys_patch.PatchSysVolume(self.constants.custom_model or self.constants.computer.real_model, self.constants, None).start_patch)
-            thread.start()
-            while thread.is_alive():
-                utilities.block_os_updaters()
-                time.sleep(1)
-        else:
-            sys_patch.PatchSysVolume(self.constants.custom_model or self.constants.computer.real_model, self.constants, None).start_patch()
+        try:
+            patcher = sys_patch.PatchSysVolume(self.constants.custom_model or self.constants.computer.real_model, self.constants, None)
+            if "Library/InstallerSandboxes/" in str(self.constants.payload_path):
+                logging.info("- Running from Installer Sandbox, blocking OS updaters")
+                with ThreadPoolExecutor(max_workers=1) as worker:
+                    pending = worker.submit(patcher.start_patch)
+                    while not pending.done():
+                        utilities.block_os_updaters()
+                        time.sleep(1)
+                    succeeded = pending.result()
+            else:
+                succeeded = patcher.start_patch()
+        except Exception:
+            logging.exception("Root patching failed; reboot was not requested")
+            sys.exit(1)
+        if succeeded is not True:
+            logging.error("Root patching did not complete; review the log and recovery state before restarting")
+            sys.exit(1)
 
 
     def _sys_unpatch_handler(self) -> None:
@@ -111,12 +121,17 @@ class arguments:
         Start root volume unpatching
         """
         logging.info("Set System Volume unpatching")
-        sys_patch.PatchSysVolume(
-            self.constants.custom_model or self.constants.computer.real_model,
-            self.constants,
-            None,
-            unpatching=True,
-        ).start_unpatch()
+        try:
+            succeeded = sys_patch.PatchSysVolume(
+                self.constants.custom_model or self.constants.computer.real_model,
+                self.constants, None, unpatching=True,
+            ).start_unpatch()
+        except Exception:
+            logging.exception("Root patch reversion failed; review recovery instructions")
+            sys.exit(1)
+        if succeeded is not True:
+            logging.error("Root patch reversion did not complete; inspect the pending recovery state")
+            sys.exit(1)
 
 
     def _sys_patch_auto_handler(self) -> None:

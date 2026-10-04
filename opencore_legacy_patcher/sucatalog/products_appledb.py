@@ -36,6 +36,8 @@ class AppleDBProducts:
         max_install_assistant_version: os_data = os_data.tahoe,
     ) -> None:
         self.constants: constants.Constants = global_constants
+        self.max_ia: os_data = max_install_assistant_version
+        self.data: list = []
 
         response = None
         try:
@@ -43,7 +45,11 @@ class AppleDBProducts:
                 APPLEDB_API_URL,
                 headers={"User-Agent": f"OCLP/{self.constants.patcher_version}"},
             )
-            self.data = response.json()
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, list):
+                raise ValueError("AppleDB catalog must be a list")
+            self.data = data
         except Exception as e:
             self.data = []
             logging.error(f"Failed to fetch AppleDB API response: {e}")
@@ -51,8 +57,6 @@ class AppleDBProducts:
         finally:
             if response is not None:
                 response.close()
-
-        self.max_ia: os_data = max_install_assistant_version
 
     def _build_installer_name(self, xnu_major: int, beta: bool) -> str:
         """
@@ -88,17 +92,26 @@ class AppleDBProducts:
         _products = []
 
         for firmware in self.data:
+            if not isinstance(firmware, dict):
+                continue
             if firmware.get("internal") or firmware.get("sdk") or firmware.get("rsr"):
                 continue
 
             # AppleDB does not track whether an installer supports the VMM pseudo-identifier,
             # so we will use MacPro7,1, which supports all macOS versions that we care about.
-            if "MacPro7,1" not in firmware["deviceMap"]:
+            if not isinstance(firmware.get("deviceMap"), list) or "MacPro7,1" not in firmware["deviceMap"]:
                 continue
 
-            firmware["raw_version"] = firmware["version"].partition(" ")[0]
-
-            xnu_major = int(firmware["build"][:2])
+            try:
+                raw_version = firmware["version"].partition(" ")[0]
+                packaging.version.parse(raw_version)
+                xnu_major = int(firmware["build"][:2])
+                post_date = datetime.datetime.fromisoformat(firmware["released"]).replace(
+                    tzinfo=zoneinfo.ZoneInfo("America/Los_Angeles"),
+                )
+            except (KeyError, TypeError, AttributeError, ValueError):
+                logging.warning("Ignoring malformed AppleDB release metadata")
+                continue
             # AppleDB sends `beta` on every release today, but the catalogue must
             # not depend on that: a missing key made `Beta` None, and the sort
             # below compares them (`None < None` raises, `None < True` raises).
@@ -107,15 +120,10 @@ class AppleDBProducts:
 
             details = {
                 # Dates in AppleDB are in Cupertino time. There are no times, so pin to 10 AM
-                "PostDate": datetime.datetime.fromisoformat(firmware["released"]).replace(
-                    # hour=10,
-                    # minute=0,
-                    # second=0,
-                    tzinfo=zoneinfo.ZoneInfo("America/Los_Angeles"),
-                ),
+                "PostDate": post_date,
                 "Title": f"{self._build_installer_name(xnu_major, beta)}",
                 "Build": firmware["build"],
-                "RawVersion": firmware["raw_version"],
+                "RawVersion": raw_version,
                 "Version": firmware["version"],
                 "Beta": beta,
                 "InstallAssistant": {"XNUMajor": xnu_major},
@@ -124,15 +132,21 @@ class AppleDBProducts:
             if xnu_major > self.max_ia:
                 continue
 
-            for source in firmware.get("sources", []):
-                if source["type"] != "installassistant":
+            sources = firmware.get("sources")
+            if not isinstance(sources, list):
+                continue
+            for source in sources:
+                if not isinstance(source, dict) or source.get("type") != "installassistant":
                     continue
 
-                if "MacPro7,1" not in source["deviceMap"]:
+                if not isinstance(source.get("deviceMap"), list) or "MacPro7,1" not in source["deviceMap"]:
                     continue
 
-                for link in source["links"]:
-                    if not link["active"]:
+                links = source.get("links")
+                if not isinstance(links, list):
+                    continue
+                for link in links:
+                    if not isinstance(link, dict) or not link.get("active") or not isinstance(link.get("url"), str) or not link["url"]:
                         continue
 
                     if not network_handler.NetworkUtilities(link["url"]).validate_link():

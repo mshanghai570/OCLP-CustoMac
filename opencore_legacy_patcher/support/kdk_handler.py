@@ -3,6 +3,7 @@ kdk_handler.py: Module for parsing and determining best Kernel Debug Kit for hos
 """
 
 import logging
+import hashlib
 import plistlib
 import re
 import requests
@@ -20,12 +21,14 @@ from ..volume   import generate_copy_arguments
 
 from . import (
     network_handler,
-    subprocess_wrapper
+    subprocess_wrapper,
+    package_trust
 )
 from .kdk_selection import (
     BLOCKED_ROOT_PATCH_KDK_DARWIN_LABEL,
     BLOCKED_ROOT_PATCH_KDK_MESSAGE,
     KernelDebugKitCandidate,
+    catalog_sha256,
     is_blocked_root_patch_kdk,
     kdk_darwin_major,
     root_patch_kdk_build_allowed,
@@ -36,6 +39,19 @@ KDK_INFO_PLIST:   str  = "KDKInfo.plist"
 KDK_API_LINK:     str  = "https://dortania.github.io/KdkSupportPkg/manifest.json"
 
 KDK_ASSET_LIST:   list = None
+
+
+def _file_sha256(path: Path) -> str | None:
+    """Hash a file in blocks, returning None when the file cannot be read."""
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError as error:
+        logging.error(f"Cannot hash Kernel Debug Kit: {error}")
+        return None
 
 
 class KernelDebugKitObject:
@@ -61,6 +77,11 @@ class KernelDebugKitObject:
         >>>         valid = kdk_object.validate_kdk_checksum()
 
     """
+
+    # Catalog-published digest for the resolved asset. Class defaults keep
+    # instances created without __init__ readable.
+    kdk_url_expected_sha256: str | None = None
+    kdk_closest_match_url_expected_sha256: str | None = None
 
     def __init__(self, global_constants: constants.Constants,
                  host_build: str, host_version: str,
@@ -90,6 +111,7 @@ class KernelDebugKitObject:
         self.kdk_url_version: str = ""
 
         self.kdk_url_expected_size: int = 0
+        self.kdk_url_expected_sha256: str | None = None
 
         self.kdk_url_is_exactly_match: bool = False
 
@@ -98,6 +120,7 @@ class KernelDebugKitObject:
         self.kdk_closest_match_url_version: str = ""
 
         self.kdk_closest_match_url_expected_size: int = 0
+        self.kdk_closest_match_url_expected_sha256: str | None = None
 
         self.success: bool = False
 
@@ -195,6 +218,7 @@ class KernelDebugKitObject:
             build=self.kdk_url_build,
             url=self.kdk_url,
             file_size=self.kdk_url_expected_size,
+            sha256=getattr(self, "kdk_url_expected_sha256", None),
         )
 
 
@@ -241,6 +265,7 @@ class KernelDebugKitObject:
         self.kdk_url_build = catalog_match.build
         self.kdk_url_version = catalog_match.version
         self.kdk_url_expected_size = catalog_match.file_size
+        self.kdk_url_expected_sha256 = catalog_match.sha256
         self.kdk_url_is_exactly_match = catalog_match.build == self.host_build
 
         self.kdk_installed_path = self._local_kdk_installed(match=catalog_match.build)
@@ -324,6 +349,7 @@ class KernelDebugKitObject:
             self.kdk_url_build = kdk["build"]
             self.kdk_url_version = kdk["version"]
             self.kdk_url_expected_size = kdk["fileSize"]
+            self.kdk_url_expected_sha256 = catalog_sha256(kdk)
             self.kdk_url_is_exactly_match = True
             break
 
@@ -343,6 +369,7 @@ class KernelDebugKitObject:
                 self.kdk_closest_match_url_build = kdk["build"]
                 self.kdk_closest_match_url_version = kdk["version"]
                 self.kdk_closest_match_url_expected_size = kdk["fileSize"]
+                self.kdk_closest_match_url_expected_sha256 = catalog_sha256(kdk)
                 self.kdk_url_is_exactly_match = False
                 break
 
@@ -358,6 +385,7 @@ class KernelDebugKitObject:
             self.kdk_url_build = self.kdk_closest_match_url_build
             self.kdk_url_version = self.kdk_closest_match_url_version
             self.kdk_url_expected_size = self.kdk_closest_match_url_expected_size
+            self.kdk_url_expected_sha256 = self.kdk_closest_match_url_expected_sha256
         else:
             logging.info(f"Direct match found for {host_build} ({host_version})")
 
@@ -684,8 +712,24 @@ class KernelDebugKitObject:
             logging.error(f"KDK DMG does not exist: {kdk_dmg_path}")
             return False
 
-        # TODO: should we use the checksum from the API?
-        result = subprocess.run(["/usr/bin/hdiutil", "verify", self.constants.kdk_download_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # The KdkSupportPkg catalog publishes a SHA-256 for each asset. When the
+        # resolved entry carried one, the downloaded bytes must match it before
+        # any image or package verification runs.
+        expected_sha256 = getattr(self, "kdk_url_expected_sha256", None)
+        if expected_sha256:
+            actual_sha256 = _file_sha256(Path(kdk_dmg_path))
+            if actual_sha256 != expected_sha256:
+                logging.error("Kernel Debug Kit digest does not match the published catalog checksum")
+                self.error_msg = (
+                    "The Kernel Debug Kit download does not match the published checksum "
+                    "for this build. Please try downloading it again."
+                )
+                return False
+            logging.info("Kernel Debug Kit matches the published catalog digest")
+        else:
+            logging.warning("KDK catalog entry published no digest; falling back to image verification")
+
+        result = subprocess.run(["/usr/bin/hdiutil", "verify", kdk_dmg_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode != 0:
             logging.info("Error: Kernel Debug Kit checksum verification failed!")
             subprocess_wrapper.log(result)
@@ -695,7 +739,8 @@ class KernelDebugKitObject:
             self.error_msg = msg
             return False
 
-        self._remove_unused_kdks()
+        # Validation must preserve installed KDKs and recovery backups. An image
+        # passing hdiutil verification does not establish a successful install.
         self.success = True
         logging.info("Kernel Debug Kit checksum verified")
         return True
@@ -727,7 +772,11 @@ class KernelDebugKitUtilities:
 
         # TODO: Check whether enough disk space is available
 
-        result = subprocess_wrapper.run_as_root(["/usr/sbin/installer", "-pkg", kdk_path, "-target", "/"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            result = package_trust.install_verified_package(kdk_path, package_trust.Publisher.APPLE)
+        except package_trust.PackageTrustError as error:
+            logging.error("KDK publisher verification failed: %s", error)
+            return False
         if result.returncode != 0:
             logging.info("Failed to install KDK:")
             subprocess_wrapper.log(result)
@@ -746,29 +795,27 @@ class KernelDebugKitUtilities:
             bool: True if successful, False if not
         """
 
-        logging.info(f"Extracting downloaded KDK disk image")
+        logging.info("Extracting downloaded KDK disk image")
         with tempfile.TemporaryDirectory() as mount_point:
-            result = subprocess_wrapper.run_as_root(["/usr/bin/hdiutil", "attach", kdk_path, "-mountpoint", mount_point, "-nobrowse"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            result = subprocess.run(["/usr/bin/hdiutil", "attach", str(kdk_path), "-mountpoint", mount_point, "-nobrowse", "-readonly"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             if result.returncode != 0:
-                logging.info("Failed to mount KDK:")
                 subprocess_wrapper.log(result)
                 return False
-
-            kdk_pkg_path = Path(f"{mount_point}/KernelDebugKit.pkg")
-            if not kdk_pkg_path.exists():
-                logging.warning("Failed to find KDK package in DMG, likely corrupted!!!")
-                self._unmount_disk_image(mount_point)
-                return False
-
-
-            if only_install_backup is False:
-                if self.install_kdk_pkg(kdk_pkg_path) is False:
-                    self._unmount_disk_image(mount_point)
+            try:
+                kdk_pkg_path = Path(mount_point) / "KernelDebugKit.pkg"
+                if not kdk_pkg_path.is_file():
+                    logging.warning("KDK disk image has no KernelDebugKit.pkg")
                     return False
-
-            self._create_backup(kdk_pkg_path, Path(f"{kdk_path.parent}/{KDK_INFO_PLIST}"))
-            self._unmount_disk_image(mount_point)
-
+                if only_install_backup:
+                    package_trust.verify_installer_package(kdk_pkg_path, package_trust.Publisher.APPLE)
+                elif not self.install_kdk_pkg(kdk_pkg_path):
+                    return False
+                self._create_backup(kdk_pkg_path, kdk_path.parent / KDK_INFO_PLIST)
+            except package_trust.PackageTrustError as error:
+                logging.error("KDK publisher verification failed: %s", error)
+                return False
+            finally:
+                self._unmount_disk_image(mount_point)
         logging.info("Successfully installed KDK")
         return True
 

@@ -1,6 +1,7 @@
 """Resource cleanup tests for streamed downloads."""
 
 import builtins
+import requests
 import tempfile
 import unittest
 
@@ -46,6 +47,36 @@ class NetworkResponseResourceTests(unittest.TestCase):
 
 
 class DownloadResourceTests(unittest.TestCase):
+    def test_http_errors_are_not_downloaded(self) -> None:
+        for status_code in (403, 404, 500):
+            with self.subTest(status=status_code), tempfile.TemporaryDirectory() as temporary:
+                destination = Path(temporary) / "asset"
+                download = self._download(destination)
+                response = requests.Response()
+                response.status_code = status_code
+                response._content = b"error page"
+                response._content_consumed = True
+                self._run_download(download, response, [])
+                self.assertFalse(download.download_complete)
+                self.assertTrue(download.error)
+                self.assertFalse(destination.exists())
+
+    def test_stream_failure_keeps_error_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            download = self._download(Path(temporary) / "asset")
+            response = mock.Mock()
+            response.iter_content.side_effect = OSError("stream interrupted")
+            self._run_download(download, response, [])
+            self.assertEqual(download.status, network_handler.DownloadStatus.ERROR)
+
+    def test_successful_download_has_complete_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            download = self._download(Path(temporary) / "asset")
+            response = mock.Mock()
+            response.iter_content.return_value = [b"asset"]
+            self._run_download(download, response, [])
+            self.assertEqual(download.status, network_handler.DownloadStatus.COMPLETE)
+
     def _download(self, path: Path) -> network_handler.DownloadObject:
         with mock.patch.object(
             network_handler.NetworkUtilities,

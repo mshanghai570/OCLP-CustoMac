@@ -12,6 +12,12 @@ import logging
 import enum
 import hashlib
 import atexit
+import weakref
+import os
+import fcntl
+import tempfile
+
+from collections.abc import Mapping
 
 from typing import Optional, Union
 from pathlib import Path
@@ -19,6 +25,7 @@ from pathlib import Path
 from . import utilities
 
 SESSION = requests.Session()
+DEFAULT_REQUEST_TIMEOUT = (5, 30)
 
 
 class DownloadStatus(enum.Enum):
@@ -106,6 +113,7 @@ class NetworkUtilities:
 
         result: requests.Response = None
 
+        kwargs.setdefault("timeout", DEFAULT_REQUEST_TIMEOUT)
         try:
             result = SESSION.get(url, **kwargs)
         except (
@@ -135,6 +143,7 @@ class NetworkUtilities:
 
         result: requests.Response = None
 
+        kwargs.setdefault("timeout", DEFAULT_REQUEST_TIMEOUT)
         try:
             result = SESSION.post(url, **kwargs)
         except (
@@ -177,11 +186,13 @@ class DownloadObject:
         self.filepath:  Path = Path(path)
 
         self.total_file_size:      float = 0.0
+        self._expected_file_size: Optional[int] = None
         self.downloaded_file_size: float = 0.0
         self.start_time:           float = time.time()
 
         self.error:             bool = False
         self.should_stop:       bool = False
+        self._stop_event = threading.Event()
         self.download_complete: bool = False
         self.has_network:       bool = NetworkUtilities(self.url).verify_network_connection()
 
@@ -268,14 +279,20 @@ class DownloadObject:
         result = None
         try:
             result = SESSION.head(self.url, allow_redirects=True, timeout=5)
+            result.raise_for_status()
             if 'Content-Length' in result.headers:
-                self.total_file_size = float(result.headers['Content-Length'])
+                length = result.headers['Content-Length']
+                if not isinstance(length, str) or not length.isascii() or not length.isdecimal():
+                    raise ValueError("Invalid Content-Length")
+                self._expected_file_size = int(length)
+                self.total_file_size = self._expected_file_size
             else:
                 raise Exception("Content-Length missing from headers")
         except Exception as e:
             logging.error(f"Error determining file size {self.url}: {str(e)}")
             logging.error("Assuming file size is 0")
             self.total_file_size = 0.0
+            self._expected_file_size = None
         finally:
             if result is not None:
                 result.close()
@@ -294,7 +311,7 @@ class DownloadObject:
 
     def _prepare_working_directory(self, path: Path) -> bool:
         """
-        Validates working enviroment, including free space and removing existing files
+        Ensure the destination directory has space without modifying cached files.
 
         Parameters:
             path (str): Path to the file
@@ -304,11 +321,6 @@ class DownloadObject:
         """
 
         try:
-            if Path(path).exists():
-                logging.info(f"Deleting existing file: {path}")
-                Path(path).unlink()
-                return True
-
             if not Path(path).parent.exists():
                 logging.info(f"Creating directory: {Path(path).parent}")
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -342,27 +354,80 @@ class DownloadObject:
 
         utilities.disable_sleep_while_running()
 
+        reference = weakref.ref(self)
+        def stop_at_exit():
+            target = reference()
+            if target is not None:
+                target.stop()
+
         response = None
-        destination_open_attempted = False
+        staging_path = None
+        staging_fd = None
+        lock_fd = None
         download_succeeded = False
         try:
             if not self.has_network:
                 raise Exception("No network connection")
 
+            # Keep this sidecar inode in place: unlinking a lock after release would
+            # allow waiting and new writers to lock different inodes. flock also
+            # coordinates separate patcher processes, not only Python threads.
+            self.filepath.parent.mkdir(parents=True, exist_ok=True)
+            lock_path = self.filepath.parent.resolve() / f".{self.filepath.name}.download.lock"
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            while True:
+                if self.should_stop or self._stop_event.is_set():
+                    raise Exception("Download stopped")
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    self._stop_event.wait(0.1)
+
             if self._prepare_working_directory(self.filepath) is False:
                 raise Exception(self.error_msg)
 
-            response = NetworkUtilities().get(self.url, stream=True, timeout=10)
+            response = NetworkUtilities().get(self.url, stream=True, timeout=10, headers={"Accept-Encoding": "identity"})
 
             try:
-                destination_open_attempted = True
-                with open(self.filepath, 'wb') as file:
-                    atexit.register(self.stop)
+                response.raise_for_status()
+                if response.status_code == 206:
+                    raise ValueError("Unexpected partial HTTP response for complete artifact download")
+                expected_size = self._expected_file_size
+                if expected_size is None and self.total_file_size > 0:
+                    expected_size = int(self.total_file_size)
+                headers = response.headers if isinstance(response.headers, Mapping) else {}
+                if headers.get("Content-Encoding", "identity").lower() != "identity":
+                    raise ValueError("Unexpected Content-Encoding for artifact download")
+                if "Content-Length" in headers:
+                    length = headers["Content-Length"]
+                    if not isinstance(length, str) or not length.isascii() or not length.isdecimal():
+                        raise ValueError("Invalid Content-Length")
+                    response_size = int(length)
+                    if expected_size is not None and response_size != expected_size:
+                        raise ValueError("Content-Length changed between HEAD and GET")
+                    expected_size = response_size
+                    self.total_file_size = response_size
+                    # GET may supply the size even when HEAD did not. Recheck the
+                    # actual staging requirement while holding the writer lock.
+                    if self._prepare_working_directory(self.filepath) is False:
+                        raise Exception(self.error_msg)
+
+                staging_fd, staging_name = tempfile.mkstemp(
+                    prefix=f".{self.filepath.name}.", suffix=".partial", dir=self.filepath.parent
+                )
+                staging_path = Path(staging_name)
+                with open(staging_fd, 'wb') as file:
+                    staging_fd = None  # the file context now owns the descriptor
+                    atexit.register(stop_at_exit)
                     for i, chunk in enumerate(response.iter_content(1024 * 1024 * 4)):
-                        if self.should_stop:
+                        if self.should_stop or self._stop_event.is_set():
                             raise Exception("Download stopped")
                         if chunk:
-                            file.write(chunk)
+                            if expected_size is not None and self.downloaded_file_size + len(chunk) > expected_size:
+                                raise ValueError("Downloaded file exceeds expected size")
+                            if file.write(chunk) != len(chunk):
+                                raise OSError("Incomplete write to download staging file")
                             self.downloaded_file_size += len(chunk)
                             if self._checksum_storage:
                                 self._update_checksum(chunk)
@@ -372,33 +437,55 @@ class DownloadObject:
                                     print(f"Downloaded {utilities.human_fmt(self.downloaded_file_size)} of {self.filename}")
                                 else:
                                     print(f"Downloaded {self.get_percent():.2f}% of {self.filename} ({utilities.human_fmt(self.get_speed())}/s) ({self.get_time_remaining():.2f} seconds remaining)")
-                    self.download_complete = True
-                    download_succeeded = True
-                    logging.info(f"Download complete: {self.filename}")
-                    logging.info("Stats:")
-                    logging.info(f"- Downloaded size: {utilities.human_fmt(self.downloaded_file_size)}")
-                    logging.info(f"- Time elapsed: {(time.time() - self.start_time):.2f} seconds")
-                    logging.info(f"- Speed: {utilities.human_fmt(self.downloaded_file_size / (time.time() - self.start_time))}/s")
-                    logging.info(f"- Location: {self.filepath}")
-                    if self._checksum_storage:
-                        self.checksum = self._checksum_storage.hexdigest()
-                        logging.info(f"Checksum: {self.checksum}")
+                    if self.should_stop or self._stop_event.is_set():
+                        raise Exception("Download stopped")
+                    if expected_size is not None and self.downloaded_file_size != expected_size:
+                        raise ValueError(f"Incomplete download: expected {expected_size} bytes, received {self.downloaded_file_size}")
+                    file.flush()
+                    if os.fstat(file.fileno()).st_size != self.downloaded_file_size:
+                        raise OSError("Download staging file size does not match transferred bytes")
+                    os.fsync(file.fileno())
             finally:
                 response.close()
+            if self.should_stop or self._stop_event.is_set():
+                raise Exception("Download stopped")
+            checksum = self._checksum_storage.hexdigest() if self._checksum_storage else None
+            # Publication happens only after length validation and successful
+            # response/file close and fsync. Readers retain the old cache until now.
+            os.replace(staging_path, self.filepath)
+            staging_path = None
+            self.checksum = checksum
+            self.download_complete = True
+            download_succeeded = True
+            elapsed = max(time.time() - self.start_time, 0.000001)
+            logging.info(f"Download complete: {self.filename}")
+            logging.info("Stats:")
+            logging.info(f"- Downloaded size: {utilities.human_fmt(self.downloaded_file_size)}")
+            logging.info(f"- Time elapsed: {elapsed:.2f} seconds")
+            logging.info(f"- Speed: {utilities.human_fmt(self.downloaded_file_size / elapsed)}/s")
+            logging.info(f"- Location: {self.filepath}")
+            if self.checksum:
+                logging.info(f"Checksum: {self.checksum}")
         except Exception as e:
             self.error = True
             self.error_msg = str(e)
             self.status = DownloadStatus.ERROR
             logging.error(f"Error downloading {self.url}: {self.error_msg}")
         finally:
-            if destination_open_attempted and not download_succeeded:
+            atexit.unregister(stop_at_exit)
+            if staging_fd is not None:
+                os.close(staging_fd)
+            if staging_path is not None:
                 try:
-                    self.filepath.unlink(missing_ok=True)
+                    staging_path.unlink(missing_ok=True)
                 except OSError as cleanup_error:
-                    logging.warning(f"Unable to remove incomplete download {self.filepath}: {cleanup_error}")
+                    logging.warning(f"Unable to remove incomplete download {staging_path}: {cleanup_error}")
+            if lock_fd is not None:
+                os.close(lock_fd)
+            utilities.enable_sleep_after_running()
 
-        self.status = DownloadStatus.COMPLETE
-        utilities.enable_sleep_after_running()
+        if download_succeeded:
+            self.status = DownloadStatus.COMPLETE
 
 
     def get_percent(self) -> float:
@@ -473,6 +560,7 @@ class DownloadObject:
         """
 
         self.should_stop = True
-        if self.active_thread:
-            while self.active_thread.is_alive():
-                time.sleep(1)
+        if getattr(self, "_stop_event", None) is not None:
+            self._stop_event.set()
+        if self.active_thread and self.active_thread is not threading.current_thread():
+            self.active_thread.join(timeout=12)

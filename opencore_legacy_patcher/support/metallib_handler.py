@@ -12,7 +12,7 @@ import packaging.version
 from typing  import cast
 from pathlib import Path
 
-from .  import network_handler, subprocess_wrapper
+from .  import network_handler, subprocess_wrapper, package_trust
 from .. import constants
 
 from ..datasets import os_data
@@ -571,9 +571,15 @@ class MetalLibraryObject:
         if self.verify_metallib(metallib) is False:
             return False
 
-        result = subprocess_wrapper.run_as_root([
-            "/usr/sbin/installer", "-pkg", metallib if metallib else self.constants.metallib_download_path, "-target", "/"
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            result = package_trust.install_pinned_package(
+                metallib if metallib else self.constants.metallib_download_path,
+                self.metallib_expected_sha256,
+            )
+        except package_trust.PackageTrustError as error:
+            self.error_msg = str(error)
+            self.success = False
+            return False
         if result.returncode != 0:
             subprocess_wrapper.log(result)
             return False

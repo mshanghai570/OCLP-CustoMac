@@ -24,7 +24,6 @@ class GeneratePackage:
         """
         self._files = {
             "./dist/OpenCore-Patcher.app": "/Library/Application Support/Dortania/OpenCore-Patcher.app",
-            "./ci_tooling/privileged_helper_tool/com.dortania.opencore-legacy-patcher.privileged-helper": "/Library/PrivilegedHelperTools/com.dortania.opencore-legacy-patcher.privileged-helper",
         }
         self._autopkg_files = {
             "./payloads/Launch Services/com.dortania.opencore-legacy-patcher.auto-patch.plist": "/Library/LaunchAgents/com.dortania.opencore-legacy-patcher.auto-patch.plist",
@@ -113,7 +112,7 @@ class GeneratePackage:
         print("Generating OpenCore-Patcher-Uninstaller.pkg")
         _tmp_uninstall = self._write_temporary_script(GenerateScripts().uninstall())
 
-        assert macos_pkg_builder.Packages(
+        if macos_pkg_builder.Packages(
             pkg_output="./dist/OpenCore-Patcher-Uninstaller.pkg",
             pkg_bundle_id="com.dortania.opencore-legacy-patcher-uninstaller",
             pkg_version=constants.Constants().patcher_version,
@@ -122,14 +121,15 @@ class GeneratePackage:
             pkg_as_distribution=True,
             pkg_title=f"{constants.Constants().patcher_name} Uninstaller",
             pkg_welcome=self._generate_uninstaller_welcome(),
-        ).build() is True
+        ).build() is not True:
+            raise RuntimeError("Failed to build OpenCore-Patcher-Uninstaller.pkg")
 
         print("Generating OpenCore-Patcher.pkg")
 
         _tmp_pkg_preinstall = self._write_temporary_script(GenerateScripts().preinstall_pkg())
         _tmp_pkg_postinstall = self._write_temporary_script(GenerateScripts().postinstall_pkg())
 
-        assert macos_pkg_builder.Packages(
+        if macos_pkg_builder.Packages(
             pkg_output="./dist/OpenCore-Patcher.pkg",
             pkg_bundle_id="com.dortania.opencore-legacy-patcher",
             pkg_version=constants.Constants().patcher_version,
@@ -141,7 +141,8 @@ class GeneratePackage:
             pkg_file_structure=self._files,
             pkg_title=constants.Constants().patcher_name,
             pkg_welcome=self._generate_installer_welcome(),
-        ).build() is True
+        ).build() is not True:
+            raise RuntimeError("Failed to build OpenCore-Patcher.pkg")
 
         payload_contract.validate_package(Path("./dist/OpenCore-Patcher.pkg"))
 
@@ -150,7 +151,7 @@ class GeneratePackage:
         _tmp_auto_pkg_preinstall = self._write_temporary_script(GenerateScripts().preinstall_autopkg())
         _tmp_auto_pkg_postinstall = self._write_temporary_script(GenerateScripts().postinstall_autopkg())
 
-        assert macos_pkg_builder.Packages(
+        if macos_pkg_builder.Packages(
             pkg_output="./dist/AutoPkg-Assets.pkg",
             pkg_bundle_id="com.dortania.pkg.AutoPkg-Assets",
             pkg_version=constants.Constants().patcher_version,
@@ -162,4 +163,6 @@ class GeneratePackage:
             pkg_file_structure=self._autopkg_files,
             pkg_title="AutoPkg Assets",
             pkg_welcome=self._generate_autopkg_welcome(),
-        ).build() is True
+        ).build() is not True:
+            raise RuntimeError("Failed to build AutoPkg-Assets.pkg")
+        payload_contract.validate_package(Path("./dist/AutoPkg-Assets.pkg"))

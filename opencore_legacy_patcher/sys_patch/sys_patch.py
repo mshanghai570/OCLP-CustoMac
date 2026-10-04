@@ -94,6 +94,7 @@ from .root_state import (
 )
 from .root_state import ROOT_PATCH_METADATA_PATH
 from .lifecycle import LifecycleDiscovery, RootPatchLifecycleState, RootPatchLifecycleStore
+from ..support.operation_lock import execute_locked_root_operation
 
 
 class PatchSysVolume:
@@ -112,6 +113,7 @@ class PatchSysVolume:
         self.computer = self.constants.computer
         self.root_supports_snapshot = utilities.check_if_root_is_apfs_snapshot()
         self.constants.root_patcher_succeeded = False # Reset Variable each time we start
+        self.constants.root_patcher_cleanup_incomplete = False
         self.constants.needs_to_open_preferences = False
         self.patch_set_dictionary = {}
         self.patch_selection = patch_selection
@@ -237,27 +239,44 @@ class PatchSysVolume:
         ).merge(save_hid_cs)
 
 
-    def _unpatch_root_vol(self):
+    def _unpatch_root_vol(self) -> bool:
         """
         Reverts APFS snapshot and cleans up any changes made to the root and data volume
         """
 
+        metadata = self._revert_metadata()
+        self.constants.root_patcher_pending_metadata = metadata
+        if RootPatchLifecycleStore(self.constants).write(RootPatchLifecycleState.REVERT_IN_PROGRESS, metadata) is False:
+            logging.error("- Cannot switch the boot snapshot without durable recovery evidence")
+            return False
+
         if APFSSnapshot(self.constants.detected_os, self.mount_location).revert_snapshot() is False:
-            return
+            return False
 
-        self._clean_skylight_plugins()
-        self._delete_nonmetal_enforcement()
+        # The snapshot switch is already complete, even if subsequent cleanup fails.
+        if self._record_revert_pending() is False:
+            self.constants.root_patcher_cleanup_incomplete = True
+            return False
 
-        kernelcache.KernelCacheSupport(
-            mount_location_data=self.mount_location_data,
-            detected_os=self.constants.detected_os,
-            skip_root_kmutil_requirement=self.skip_root_kmutil_requirement
-        ).clean_auxiliary_kc()
+        try:
+            cleaned = kernelcache.KernelCacheSupport(
+                mount_location_data=self.mount_location_data,
+                detected_os=self.constants.detected_os,
+                skip_root_kmutil_requirement=self.skip_root_kmutil_requirement
+            ).clean_auxiliary_kc(expected_project_identity=getattr(self.constants, "project_identity", None))
+        except Exception:
+            self.constants.root_patcher_cleanup_incomplete = True
+            logging.error("- Boot snapshot restored, but Data-volume cleanup failed; reboot is required")
+            raise
+        if cleaned is False:
+            self.constants.root_patcher_cleanup_incomplete = True
+            logging.warning("- Boot snapshot restored; untrusted Data-volume cleanup was skipped. Reboot is required")
+            return False
 
         self.constants.root_patcher_succeeded = True
-        self._record_revert_pending()
         logging.info("- Unpatching complete")
         logging.info("\nPlease reboot the machine for patches to take effect")
+        return True
 
 
     def _rebuild_root_volume(self) -> bool:
@@ -407,19 +426,21 @@ class PatchSysVolume:
                 self.installed_patch_metadata = plistlib.load(metadata_file)
 
 
-    def _record_patch_pending(self) -> None:
+    def _record_patch_pending(self) -> bool:
         metadata = getattr(self, "installed_patch_metadata", None)
         self.constants.root_patcher_patch_pending = True
         self.constants.root_patcher_revert_pending = False
         self.constants.root_patcher_pending_metadata = metadata if isinstance(metadata, dict) else None
         if not isinstance(metadata, dict):
             logging.error("- Root patching succeeded, but pending operation metadata is unavailable")
-            return
+            return False
         if RootPatchLifecycleStore(self.constants).write(
             RootPatchLifecycleState.PATCH_PENDING_REBOOT,
             metadata,
         ) is False:
             logging.error("- Root patching succeeded, but persistent pending-reboot evidence could not be recorded")
+            return False
+        return True
 
 
     def _patch_transaction_metadata(self) -> dict:
@@ -464,7 +485,7 @@ class PatchSysVolume:
             logging.error("- Failed to update root-patch lifecycle; in-progress recovery evidence remains authoritative")
 
 
-    def _record_revert_pending(self) -> None:
+    def _revert_metadata(self) -> dict:
         metadata = getattr(self.constants, "root_patcher_pending_metadata", None)
         lifecycle_store = RootPatchLifecycleStore(self.constants)
         if not isinstance(metadata, dict):
@@ -478,12 +499,20 @@ class PatchSysVolume:
             except (OSError, plistlib.InvalidFileException, TypeError, ValueError):
                 metadata = None
 
+        # Recovery is permitted without installed history. This record carries
+        # no invented file ownership or installed patch selection.
+        return metadata if isinstance(metadata, dict) else {"Recovery Schema": "KGP-Root-Patch-Recovery-v1"}
+
+
+    def _record_revert_pending(self) -> bool:
+        metadata = self._revert_metadata()
         self.constants.root_patcher_patch_pending = False
         self.constants.root_patcher_revert_pending = True
-        self.constants.root_patcher_pending_metadata = metadata if isinstance(metadata, dict) else None
-        if isinstance(metadata, dict):
-            if lifecycle_store.write(RootPatchLifecycleState.REVERT_PENDING, metadata) is False:
-                logging.error("- Reversion succeeded, but persistent pending-reboot evidence could not be recorded")
+        self.constants.root_patcher_pending_metadata = metadata
+        if RootPatchLifecycleStore(self.constants).write(RootPatchLifecycleState.REVERT_PENDING, metadata) is False:
+            logging.error("- Reversion succeeded, but persistent pending-reboot evidence could not be recorded")
+            return False
+        return True
 
 
     def _patch_root_vol(self):
@@ -673,18 +702,12 @@ class PatchSysVolume:
         if missing:
             raise PayloadSourceError(format_missing_sources(missing))
 
-        # Make sure old SkyLight plugins aren't being used
-        self._clean_skylight_plugins()
-
-        # Make sure non-Metal Enforcement preferences are not present
-        self._delete_nonmetal_enforcement()
-
-        # Make sure we clean old kexts in /L*/E* that are not in the patchset
+        # Remove only Data-volume extensions recorded as owned by this project.
         kernelcache.KernelCacheSupport(
             mount_location_data=self.mount_location_data,
             detected_os=self.constants.detected_os,
             skip_root_kmutil_requirement=self.skip_root_kmutil_requirement
-        ).clean_auxiliary_kc()
+        ).clean_auxiliary_kc(expected_project_identity=getattr(self.constants, "project_identity", None))
 
         # Make sure SNB kexts are compatible with the host
         if "Intel Sandy Bridge" in required_patches:
@@ -707,7 +730,12 @@ class PatchSysVolume:
         patch_selection = getattr(self, "patch_selection", None)
         if patch_selection is not None and patch_selection.is_empty():
             logging.error(EMPTY_SELECTION_MESSAGE)
-            return
+            return False
+
+        return execute_locked_root_operation(self._start_patch_locked)
+
+
+    def _start_patch_locked(self):
 
         logging.info("- Starting Patch Process")
         logging.info(f"- Determining Required Patch set for Darwin {self.constants.detected_os}")
@@ -719,30 +747,30 @@ class PatchSysVolume:
 
         if self.patch_set_dictionary == {}:
             logging.error(EMPTY_SELECTION_MESSAGE)
-            return
+            return False
 
         actual_patch_selection = semantic_patch_selection(self.patch_set_dictionary)
         expected_patch_selection = getattr(self, "expected_patch_selection", None)
         if expected_patch_selection is not None and actual_patch_selection != expected_patch_selection:
             logging.error("- Root patch operation blocked: applicability or requested selection changed")
-            return
+            return False
 
         root_state = RootPatchStateEvaluator(self.constants).evaluate(self.patch_set_dictionary)
         if root_state.patch_allowed is False:
             logging.error(f"- Root patch operation blocked: {root_state.reason}")
-            return
+            return False
 
         logging.info("- Verifying whether Root Patching possible")
         if patchset_obj.can_patch is False:
             logging.error("- Cannot continue with patching!!!")
             patchset_obj.detailed_errors()
-            return
+            return False
 
         manual_kdk_candidate = getattr(self, "manual_kdk_candidate", None)
         if manual_kdk_candidate is not None:
             if patchset_obj.device_properties[HardwarePatchsetSettings.KERNEL_DEBUG_KIT_REQUIRED] is False:
                 logging.error("- Manual KDK selection is invalid because the requested patches no longer require a KDK")
-                return
+                return False
             manual_kdk = kdk_handler.KernelDebugKitObject(
                 self.constants,
                 self.constants.detected_os_build,
@@ -753,24 +781,24 @@ class PatchSysVolume:
             )
             if manual_kdk.success is False or manual_kdk.resolved_candidate() != manual_kdk_candidate:
                 logging.error("- Manual KDK selection is no longer valid; no substitute KDK will be used")
-                return
+                return False
 
         self._apply_hardware_details(patchset_obj.device_properties)
 
         logging.info("- Patcher is capable of patching")
         if PatcherSupportPkgMount(self.constants).mount() is False:
             logging.error("- Critical resources missing, cannot continue with patching!!!")
-            return
+            return False
 
         if self._mount_root_vol() is False:
             logging.error("- Failed to mount root volume, cannot continue with patching!!!")
-            return
+            return False
 
         if self._run_sanity_checks() is False:
             self._unmount_root_vol()
             logging.error("- Failed sanity checks, cannot continue with patching!!!")
             logging.error("- Please ensure that you do not have any updates pending")
-            return
+            return False
 
         # Everything above this point is validation, resource preparation, or
         # mounting.  _patch_root_vol() begins with preflight operations that
@@ -778,7 +806,7 @@ class PatchSysVolume:
         # evidence is mandatory before crossing that boundary.
         if self._record_patch_in_progress() is False:
             self._unmount_root_vol()
-            return
+            return False
 
         try:
             self._patch_root_vol()
@@ -787,13 +815,17 @@ class PatchSysVolume:
             self._unmount_root_vol()
             raise
         if self.constants.root_patcher_succeeded is True:
-            self._record_patch_pending()
-            return
+            return self._record_patch_pending()
         self._record_patch_failed()
         self._unmount_root_vol()
+        return False
 
 
-    def start_unpatch(self) -> None:
+    def start_unpatch(self) -> bool:
+        return execute_locked_root_operation(self._start_unpatch_locked)
+
+
+    def _start_unpatch_locked(self) -> bool:
         """
         Entry function for unpatching the root volume
         """
@@ -808,15 +840,18 @@ class PatchSysVolume:
         root_state = RootPatchStateEvaluator(self.constants).evaluate(patchset_obj.patches)
         if root_state.recovery_authorized is False:
             logging.error(f"- Root patch reversion blocked: {root_state.reason}")
-            return
+            return False
 
         if patchset_obj.can_unpatch is False:
             logging.error("- Revert is required by the current root state, but SIP requirements prevent execution")
             patchset_obj.detailed_errors()
-            return
+            return False
 
         if self._mount_root_vol() is False:
             logging.error("- Failed to mount root volume, cannot continue with unpatching!!!")
-            return
+            return False
 
-        self._unpatch_root_vol()
+        try:
+            return self._unpatch_root_vol()
+        finally:
+            self._unmount_root_vol()

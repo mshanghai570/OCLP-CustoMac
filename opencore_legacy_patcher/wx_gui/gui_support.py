@@ -272,10 +272,48 @@ class ThreadHandler(logging.Handler):
     def __init__(self, text_box: wx.TextCtrl):
         logging.Handler.__init__(self)
         self.text_box = text_box
+        self._closed = False
 
 
     def emit(self, record: logging.LogRecord):
-        wx.CallAfter(self.text_box.AppendText, self.format(record) + '\n')
+        if not self._closed:
+            wx.CallAfter(self._append, self.format(record) + '\n')
+
+    def _append(self, message):
+        if self._closed:
+            return
+        try:
+            if self.text_box and not self.text_box.IsBeingDeleted():
+                self.text_box.AppendText(message)
+        except RuntimeError:
+            # wx may destroy a control between queuing and dispatching an event.
+            return
+
+    def close(self):
+        self._closed = True
+        super().close()
+
+
+class ResultThread(threading.Thread):
+    """Carry worker failures and return values back to the waiting UI thread."""
+
+    def run(self):
+        self.value = None
+        self.error = None
+        try:
+            if self._target:
+                self.value = self._target(*self._args, **self._kwargs)
+        except BaseException as error:
+            self.error = error
+        finally:
+            del self._target, self._args, self._kwargs
+
+    def result(self):
+        if self.is_alive():
+            raise RuntimeError("Worker has not finished")
+        if self.error is not None:
+            raise self.error
+        return self.value
 
 
 def wait_for_thread(thread: threading.Thread, sleep_interval=None):
@@ -289,6 +327,8 @@ def wait_for_thread(thread: threading.Thread, sleep_interval=None):
     while thread.is_alive():
         wx.Yield()
         thread.join(timeout=interval)
+    if isinstance(thread, ResultThread):
+        return thread.result()
 
 
 class RestartHost:

@@ -12,7 +12,7 @@ class ModernAudio(BaseHardware):
     """
     Optimized Modern Audio patch class for improved performance on resource-constrained systems
     """
-    
+
     def __init__(self, xnu_major, xnu_minor, os_build, global_constants: Constants) -> None:
         super().__init__(xnu_major, xnu_minor, os_build, global_constants)
 
@@ -72,5 +72,5 @@ class ModernAudio(BaseHardware):
         """
         if self.native_os():
             return {}
-        
+
         return self._modern_audio_patches()

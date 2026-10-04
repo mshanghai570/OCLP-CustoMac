@@ -13,6 +13,7 @@ import binascii
 import plistlib
 import subprocess
 import py_sip_xnu
+import threading
 
 from pathlib import Path
 
@@ -157,22 +158,38 @@ def friendly_hex(integer: int):
     return "{:02X}".format(integer)
 
 sleep_process = None
+_sleep_users = 0
+_sleep_lock = threading.Lock()
+
+
+def _release_all_sleep_inhibition():
+    global sleep_process, _sleep_users
+    with _sleep_lock:
+        if sleep_process is not None:
+            sleep_process.kill()
+            sleep_process.wait(timeout=5)
+            sleep_process = None
+        _sleep_users = 0
 
 def disable_sleep_while_running():
-    global sleep_process
-    logging.info("Disabling Idle Sleep")
-    if sleep_process is None:
-        # If sleep_process is active, we'll just keep it running
-        sleep_process = subprocess.Popen(["/usr/bin/caffeinate", "-d", "-i", "-s"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    # Ensures that if we don't properly close the process, 'atexit' will for us
-    atexit.register(enable_sleep_after_running)
+    global sleep_process, _sleep_users
+    with _sleep_lock:
+        if sleep_process is None:
+            logging.info("Disabling Idle Sleep")
+            sleep_process = subprocess.Popen(["/usr/bin/caffeinate", "-d", "-i", "-s"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            atexit.register(_release_all_sleep_inhibition)
+        _sleep_users += 1
 
 def enable_sleep_after_running():
-    global sleep_process
-    if sleep_process:
-        logging.info("Re-enabling Idle Sleep")
-        sleep_process.kill()
-        sleep_process = None
+    global sleep_process, _sleep_users
+    with _sleep_lock:
+        _sleep_users = max(0, _sleep_users - 1)
+        if _sleep_users == 0 and sleep_process is not None:
+            logging.info("Re-enabling Idle Sleep")
+            sleep_process.kill()
+            sleep_process.wait(timeout=5)
+            sleep_process = None
+            atexit.unregister(_release_all_sleep_inhibition)
 
 
 def check_kext_loaded(bundle_id: str) -> str:

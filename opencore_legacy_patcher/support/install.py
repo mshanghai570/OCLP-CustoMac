@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 
 from . import utilities, subprocess_wrapper
+from .efi_transaction import EFIBootloaderTransaction
+from .operation_lock import execute_locked_root_operation
 
 from .. import constants
 
@@ -93,76 +95,89 @@ class tui_disk_installation:
         return False
 
 
-    def install_opencore(self, full_disk_identifier: str):
-        # TODO: Apple Script fails in Yosemite(?) and older
-        logging.info(f"Mounting partition: {full_disk_identifier}")
-        result = subprocess_wrapper.run_as_root(["/usr/sbin/diskutil", "mount", full_disk_identifier], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    def _disk_info(self, identifier: str) -> dict:
+        result = subprocess.run(["/usr/sbin/diskutil", "info", "-plist", identifier], capture_output=True)
         if result.returncode != 0:
-            logging.info("Mount failed")
-            subprocess_wrapper.log(result)
-            return
+            raise RuntimeError(f"Cannot query disk identity: {identifier}")
+        info = plistlib.loads(result.stdout)
+        if not isinstance(info, dict):
+            raise ValueError("Invalid disk identity response")
+        return info
 
-        partition_info = plistlib.loads(subprocess.run(["/usr/sbin/diskutil", "info", "-plist", full_disk_identifier], stdout=subprocess.PIPE).stdout.decode().strip().encode())
-        parent_disk = partition_info["ParentWholeDisk"]
-        drive_host_info = plistlib.loads(subprocess.run(["/usr/sbin/diskutil", "info", "-plist", parent_disk], stdout=subprocess.PIPE).stdout.decode().strip().encode())
-        sd_type = drive_host_info.get("MediaName", "Disk")
-        try:
-            ssd_type = drive_host_info["SolidState"]
-        except KeyError:
-            ssd_type = False
-        mount_path = Path(partition_info["MountPoint"])
-        disk_type = partition_info["BusProtocol"]
 
-        if not mount_path.exists():
-            logging.info("EFI failed to mount!")
+    def install_opencore(self, full_disk_identifier: str) -> bool:
+        if not isinstance(full_disk_identifier, str) or not re.fullmatch(r"disk\d+s\d+", full_disk_identifier):
+            logging.error("Invalid EFI partition identifier")
             return False
 
-        if (mount_path / Path("EFI/OC")).exists():
-            logging.info("Removing preexisting EFI/OC folder")
-            subprocess.run(["/bin/rm", "-rf", mount_path / Path("EFI/OC")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return execute_locked_root_operation(lambda: self._install_opencore_locked(full_disk_identifier))
 
-        if (mount_path / Path("System")).exists():
-            logging.info("Removing preexisting System folder")
-            subprocess.run(["/bin/rm", "-rf", mount_path / Path("System")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        if (mount_path / Path("boot.efi")).exists():
-            logging.info("Removing preexisting boot.efi")
-            subprocess.run(["/bin/rm", mount_path / Path("boot.efi")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    def _install_opencore_locked(self, full_disk_identifier: str) -> bool:
 
-        logging.info("Copying OpenCore onto EFI partition")
-        subprocess.run(["/bin/mkdir", "-p", mount_path / Path("EFI")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["/bin/cp", "-r", self.constants.opencore_release_folder / Path("EFI/OC"), mount_path / Path("EFI/OC")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["/bin/cp", "-r", self.constants.opencore_release_folder / Path("System"), mount_path / Path("System")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        owns_mount = False
+        success = False
+        identity = None
+        try:
+            before = self._disk_info(full_disk_identifier)
+            identity = before.get("DiskUUID") or before.get("VolumeUUID")
+            if before.get("DeviceIdentifier") != full_disk_identifier or not isinstance(identity, str) or not identity:
+                raise ValueError("EFI partition identity cannot be established")
+            if before.get("Content") != "EFI" and before.get("FilesystemType") != "msdos":
+                raise ValueError("Selected partition is not an EFI or FAT partition")
+            if before.get("Mounted") is not True:
+                logging.info(f"Mounting partition: {full_disk_identifier}")
+                result = subprocess_wrapper.run_as_root(
+                    ["/usr/sbin/diskutil", "mount", full_disk_identifier], capture_output=True,
+                )
+                if result.returncode != 0:
+                    subprocess_wrapper.log(result)
+                    return False
+                owns_mount = True
 
-        if Path(self.constants.opencore_release_folder / Path("boot.efi")).exists():
-            subprocess.run(["/bin/cp", self.constants.opencore_release_folder / Path("boot.efi"), mount_path / Path("boot.efi")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            mounted = self._disk_info(full_disk_identifier)
+            if mounted.get("DeviceIdentifier") != full_disk_identifier or (mounted.get("DiskUUID") or mounted.get("VolumeUUID")) != identity:
+                raise ValueError("Selected EFI partition changed while mounting")
+            mount_point = mounted.get("MountPoint")
+            if mounted.get("Mounted") is not True or not isinstance(mount_point, str) or not Path(mount_point).is_absolute():
+                raise ValueError("EFI partition did not mount")
+            mount_path = Path(mount_point)
+            success = EFIBootloaderTransaction(
+                self.constants.opencore_release_folder, mount_path, self.constants.boot_efi,
+            ).install()
+            if success:
+                # An icon is cosmetic; its failure cannot invalidate verified boot files.
+                try:
+                    drive = self._disk_info(mounted["ParentWholeDisk"])
+                    if self._determine_sd_card(drive.get("MediaName", "Disk")):
+                        icon = self.constants.icon_path_sd
+                    elif drive.get("SolidState") is True:
+                        icon = self.constants.icon_path_ssd
+                    elif mounted.get("BusProtocol") == "USB":
+                        icon = self.constants.icon_path_external
+                    else:
+                        icon = self.constants.icon_path_internal
+                    subprocess_wrapper.run_as_root_and_verify(
+                        ["/bin/cp", str(icon), str(mount_path)], capture_output=True,
+                    )
+                except Exception as error:
+                    logging.warning(f"OpenCore was installed, but the drive icon could not be updated: {error}")
+        except Exception as error:
+            logging.error(f"OpenCore installation failed: {error}")
+            success = False
+        finally:
+            if owns_mount:
+                try:
+                    current = self._disk_info(full_disk_identifier)
+                    if (current.get("DiskUUID") or current.get("VolumeUUID")) != identity:
+                        raise ValueError("EFI identity changed; refusing to unmount another volume")
+                    subprocess_wrapper.run_as_root_and_verify(
+                        ["/usr/sbin/diskutil", "umount", full_disk_identifier], capture_output=True,
+                    )
+                except Exception as error:
+                    logging.error(f"Unable to release EFI mount: {error}")
+                    success = False
 
-        if self.constants.boot_efi is True:
-            logging.info("Converting Bootstrap to BOOTx64.efi")
-            if (mount_path / Path("EFI/BOOT")).exists():
-                subprocess.run(["/bin/rm", "-rf", mount_path / Path("EFI/BOOT")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            Path(mount_path / Path("EFI/BOOT")).mkdir()
-            subprocess.run(["/bin/mv", mount_path / Path("System/Library/CoreServices/boot.efi"), mount_path / Path("EFI/BOOT/BOOTx64.efi")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            subprocess.run(["/bin/rm", "-rf", mount_path / Path("System")], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        if self._determine_sd_card(sd_type) is True:
-            logging.info("Adding SD Card icon")
-            subprocess.run(["/bin/cp", self.constants.icon_path_sd, mount_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        elif ssd_type is True:
-            logging.info("Adding SSD icon")
-            subprocess.run(["/bin/cp", self.constants.icon_path_ssd, mount_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        elif disk_type == "USB":
-            logging.info("Adding External USB Drive icon")
-            subprocess.run(["/bin/cp", self.constants.icon_path_external, mount_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        else:
-            logging.info("Adding Internal Drive icon")
-            subprocess.run(["/bin/cp", self.constants.icon_path_internal, mount_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        logging.info("Cleaning install location")
-        if not self.constants.recovery_status:
-            logging.info("Unmounting EFI partition")
-            subprocess.run(["/usr/sbin/diskutil", "umount", mount_path], stdout=subprocess.PIPE).stdout.decode().strip().encode()
-
-        logging.info("OpenCore transfer complete")
-
-        return True
+        if success:
+            logging.info("OpenCore transfer complete")
+        return success

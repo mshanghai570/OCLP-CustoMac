@@ -20,6 +20,11 @@ def _kdk_constants():
 
 
 class RevertKDKLoggingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        lock = mock.patch("opencore_legacy_patcher.support.operation_lock.RootOperationLock")
+        lock.start()
+        self.addCleanup(lock.stop)
+
     def test_quiet_lookup_suppresses_installed_status_but_normal_lookup_logs_it(self) -> None:
         with mock.patch.object(
             kdk_handler.KernelDebugKitObject,
@@ -49,6 +54,7 @@ class RevertKDKLoggingTests(unittest.TestCase):
         patcher.constants = types.SimpleNamespace()
         patcher.patch_selection = RootPatchSelection(frozenset(), frozenset())
         patcher._mount_root_vol = mock.Mock(return_value=True)
+        patcher._unmount_root_vol = mock.Mock()
         patcher._unpatch_root_vol = mock.Mock()
         detection = types.SimpleNamespace(
             patches={"Modern Audio": {}},

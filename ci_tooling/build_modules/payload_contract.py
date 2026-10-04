@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import pkgutil
 import re
+import stat
 import subprocess
 import tempfile
 import zipfile
@@ -427,9 +428,23 @@ class PayloadContract:
 
     def validate_application(self, application_path: Path) -> None:
         """Validate the exact payload image embedded in an application bundle."""
+        self.validate_privilege_policy(application_path)
         self.validate_payload_dmg(
             application_path.resolve() / "Contents" / "Resources" / "payloads.dmg"
         )
+
+    @staticmethod
+    def validate_privilege_policy(root: Path) -> None:
+        """Personal distributions must not contain a helper broker or setuid files."""
+        for path in root.rglob("*"):
+            if "PrivilegedHelperTools" in path.parts or path.name == "com.dortania.opencore-legacy-patcher.privileged-helper":
+                raise PayloadContractError(f"Retired privileged helper included: {path}")
+            if path.lstat().st_mode & (stat.S_ISUID | stat.S_ISGID):
+                raise PayloadContractError(f"Setuid/setgid artifact is prohibited: {path}")
+            if path.name == "postinstall" and path.is_file():
+                script = path.read_text()
+                if re.search(r"chmod[^\n]*(?:\+s|\b[2467][0-7]{3}\b)", script):
+                    raise PayloadContractError(f"Package script enables setuid/setgid: {path}")
 
     def validate_package(self, package_path: Path) -> None:
         """Expand a package without installing it and validate its embedded application."""
@@ -451,6 +466,7 @@ class PayloadContract:
                     f"{expand.stdout.decode('utf-8', errors='replace').strip()}"
                 )
 
+            self.validate_privilege_policy(expanded_path)
             applications = sorted(expanded_path.rglob("OpenCore-Patcher.app"))
             if len(applications) != 1:
                 raise PayloadContractError(

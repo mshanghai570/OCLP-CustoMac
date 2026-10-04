@@ -1,4 +1,8 @@
 import sys
+import os
+import stat
+import struct
+import tempfile
 import plistlib
 import subprocess
 
@@ -32,6 +36,7 @@ class GenerateApplication:
 
         self._analytics_key = analytics_key
         self._analytics_endpoint = analytics_endpoint
+        self._analytics_original_source: bytes | None = None
 
 
     def _generate_application(self) -> None:
@@ -64,15 +69,16 @@ class GenerateApplication:
         if not Path(_file).exists():
             raise FileNotFoundError("analytics_handler.py not found")
 
+        self._analytics_original_source = _file.read_bytes()
         lines = []
         with open(_file, "r") as f:
             lines = f.readlines()
 
         for i, line in enumerate(lines):
             if line.startswith("SITE_KEY:         str = "):
-                lines[i] = f"SITE_KEY:         str = \"{self._analytics_key}\"\n"
+                lines[i] = f"SITE_KEY:         str = {self._analytics_key!r}\n"
             elif line.startswith("ANALYTICS_SERVER: str = "):
-                lines[i] = f"ANALYTICS_SERVER: str = \"{self._analytics_endpoint}\"\n"
+                lines[i] = f"ANALYTICS_SERVER: str = {self._analytics_endpoint!r}\n"
 
         with open(_file, "w") as f:
             f.writelines(lines)
@@ -87,73 +93,125 @@ class GenerateApplication:
         if not all([self._analytics_key, self._analytics_endpoint]):
             return
 
-        print("Removing analytics data")
-        if not _file.exists():
-            raise FileNotFoundError("analytics_handler.py not found")
-
-        lines = []
-        with open(_file, "r") as f:
-            lines = f.readlines()
-
-        for i, line in enumerate(lines):
-            if line.startswith("SITE_KEY:         str = "):
-                lines[i] = "SITE_KEY:         str = \"\"\n"
-            elif line.startswith("ANALYTICS_SERVER: str = "):
-                lines[i] = "ANALYTICS_SERVER: str = \"\"\n"
-
-        with open(_file, "w") as f:
-            f.writelines(lines)
+        if self._analytics_original_source is not None:
+            print("Restoring original analytics source")
+            _file.write_bytes(self._analytics_original_source)
+            self._analytics_original_source = None
 
 
-    def _patch_load_command(self):
+    @staticmethod
+    def _macho_minimum_versions(data: bytes) -> list[int]:
+        """Read deployment targets without modifying executable bytes.
+
+        Validate each thin/fat slice and every load-command boundary before
+        accepting metadata. Unknown platforms and absent targets fail closed.
         """
-        Patch LC_VERSION_MIN_MACOSX in Load Command to report 10.10
+        thin_magic = {b"\xce\xfa\xed\xfe": ("<", 28), b"\xcf\xfa\xed\xfe": ("<", 32),
+                      b"\xfe\xed\xfa\xce": (">", 28), b"\xfe\xed\xfa\xcf": (">", 32)}
+        fat_magic = {b"\xca\xfe\xba\xbe": (">", 20), b"\xbe\xba\xfe\xca": ("<", 20),
+                     b"\xca\xfe\xba\xbf": (">", 32), b"\xbf\xba\xfe\xca": ("<", 32)}
 
-        By default Pyinstaller will create binaries supporting 10.13+
-        However this limitation is entirely arbitrary for our libraries
-        and instead we're able to support 10.10 without issues.
+        def thin(start: int, size: int) -> list[int]:
+            end = start + size
+            magic = data[start:start + 4]
+            if magic not in thin_magic:
+                raise ValueError("Invalid Mach-O slice magic")
+            endian, header_size = thin_magic[magic]
+            if size < header_size:
+                raise ValueError("Truncated Mach-O header")
+            ncmds, sizeofcmds = struct.unpack_from(endian + "II", data, start + 16)
+            cursor = start + header_size
+            command_end = cursor + sizeofcmds
+            if command_end > end or ncmds > sizeofcmds // 8:
+                raise ValueError("Mach-O commands exceed slice")
+            versions = []
+            for _ in range(ncmds):
+                if cursor + 8 > command_end:
+                    raise ValueError("Truncated Mach-O load command")
+                command, length = struct.unpack_from(endian + "II", data, cursor)
+                if length < 8 or length % 4 or cursor + length > command_end:
+                    raise ValueError("Invalid Mach-O load-command size")
+                if command == 0x24:  # LC_VERSION_MIN_MACOSX
+                    if length != 16:
+                        raise ValueError("Invalid LC_VERSION_MIN_MACOSX")
+                    versions.append(struct.unpack_from(endian + "I", data, cursor + 8)[0])
+                elif command == 0x32:  # LC_BUILD_VERSION
+                    if length < 24:
+                        raise ValueError("Truncated LC_BUILD_VERSION")
+                    platform, minimum, sdk, tools = struct.unpack_from(endian + "IIII", data, cursor + 8)
+                    if platform != 1 or length != 24 + 8 * tools:
+                        raise ValueError("Unsupported Mach-O build platform or tools")
+                    versions.append(minimum)
+                cursor += length
+            if cursor != command_end or len(versions) != 1 or not any(versions):
+                raise ValueError("Missing or ambiguous macOS deployment target")
+            return versions
 
-        To verify set version:
-          otool -l ./dist/OpenCore-Patcher.app/Contents/MacOS/OpenCore-Patcher
+        magic = data[:4]
+        if magic in thin_magic:
+            return thin(0, len(data))
+        if magic not in fat_magic or len(data) < 8:
+            raise ValueError("Invalid Mach-O file")
+        endian, entry_size = fat_magic[magic]
+        count = struct.unpack_from(endian + "I", data, 4)[0]
+        table_end = 8 + count * entry_size
+        if not count or table_end > len(data):
+            raise ValueError("Invalid Mach-O fat architecture table")
+        intervals = []
+        versions = []
+        for index in range(count):
+            cursor = 8 + index * entry_size
+            offset, size = struct.unpack_from(endian + ("QQ" if entry_size == 32 else "II"), data, cursor + 8)
+            if not size or offset < table_end or offset + size > len(data):
+                raise ValueError("Mach-O fat slice exceeds file")
+            if any(offset < stop and offset + size > start for start, stop in intervals):
+                raise ValueError("Overlapping Mach-O fat slices")
+            intervals.append((offset, offset + size))
+            versions.extend(thin(offset, size))
+        return versions
 
-              cmd LC_VERSION_MIN_MACOSX
-          cmdsize 16
-          version 10.13
-              sdk 10.9
+
+    def _update_runtime_minimum(self) -> None:
+        """Set the bundle floor from actual packaged native dependencies.
+
+        A newer Python/wx build does not acquire older OS support by lowering
+        its bootloader header. Keep all Mach-O targets and SDK fields intact.
         """
-        _file = self._application_output / "Contents" / "MacOS" / "OpenCore-Patcher"
+        contents = self._application_output / "Contents"
+        executable = contents / "MacOS/OpenCore-Patcher"
+        versions = self._macho_minimum_versions(executable.read_bytes())
+        magic_numbers = {b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",
+                         b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}
+        for path in contents.rglob("*"):
+            if not path.is_file() or path == executable:
+                continue
+            with path.open("rb") as source:
+                if source.read(4) not in magic_numbers:
+                    continue
+                source.seek(0)
+                versions.extend(self._macho_minimum_versions(source.read()))
+        minimum = max(versions)
+        plist_path = contents / "Info.plist"
+        info = plistlib.loads(plist_path.read_bytes())
+        existing = tuple(int(part) for part in info.get("LSMinimumSystemVersion", "0.0.0").split("."))
+        actual = (minimum >> 16, (minimum >> 8) & 0xff, minimum & 0xff)
+        floor = max(existing + (0,) * (3 - len(existing)), actual)
+        info["LSMinimumSystemVersion"] = ".".join(str(part) for part in floor)
+        mode = stat.S_IMODE(plist_path.stat().st_mode)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=plist_path.parent, delete=False) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(plistlib.dumps(info, sort_keys=True))
+                temporary.flush()
+                os.fsync(temporary.fileno())
+                os.fchmod(temporary.fileno(), mode)
+            os.replace(temporary_path, plist_path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+        print(f"Application runtime requires macOS {info['LSMinimumSystemVersion']} or newer")
 
-        _find    = b'\x00\x0D\x0A\x00' # 10.13 (0xA0D)
-        _replace = b'\x00\x0A\x0A\x00' # 10.10 (0xA0A)
-
-        print("Patching LC_VERSION_MIN_MACOSX")
-        with open(_file, "rb") as f:
-            data = f.read()
-            data = data.replace(_find, _replace, 1)
-
-        with open(_file, "wb") as f:
-            f.write(data)
-
-
-    def _patch_sdk_version(self) -> None:
-        """
-        Patch LC_BUILD_VERSION in Load Command to report the macOS 26 SDK
-
-        This will enable the Solarium refresh when running on macOS 26
-        Minor visual anomalies and padding issues exist, disable if not addressed before release
-        """
-        _file = self._application_output / "Contents" / "MacOS" / "OpenCore-Patcher"
-
-        _find    = b'\x00\x01\x0C\x00'
-        _replace = b'\x00\x00\x1A\x00'
-
-        print("Patching LC_BUILD_VERSION")
-        with open(_file, "rb") as f:
-            data = f.read()
-            data = data.replace(_find, _replace)
-
-        with open(_file, "wb") as f:
-            f.write(data)
 
     def _embed_git_data(self) -> None:
         """
@@ -224,12 +282,13 @@ class GenerateApplication:
             commit_url=self._git_commit_url,
             commit_date=self._git_commit_date,
         )
-        self._embed_analytics_key()
-        self._generate_application()
-        self._remove_analytics_key()
+        try:
+            self._embed_analytics_key()
+            self._generate_application()
+        finally:
+            self._remove_analytics_key()
 
-        self._patch_load_command()
-        self._patch_sdk_version() if not self._git_branch or not self._git_branch.startswith('refs/tags') else None
+        self._update_runtime_minimum()
         self._embed_git_data()
         self._embed_resources()
         self._refresh_ad_hoc_signature()

@@ -161,6 +161,11 @@ class Phase3BSelectionStateTests(unittest.TestCase):
 
 
 class Phase3BOperationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        lock = mock.patch("opencore_legacy_patcher.support.operation_lock.RootOperationLock")
+        lock.start()
+        self.addCleanup(lock.stop)
+
     def test_operation_refuses_changed_selection_before_mounting(self) -> None:
         selection = RootPatchSelection.initialize(APPLICABLE)
         patcher = object.__new__(sys_patch.PatchSysVolume)

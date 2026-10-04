@@ -20,7 +20,8 @@ from ..wx_gui import (
 from ..support import (
     network_handler,
     updates,
-    subprocess_wrapper
+    subprocess_wrapper,
+    package_trust
 )
 
 
@@ -100,9 +101,10 @@ class UpdateFrame(wx.Frame):
             file_name = "OpenCore-Patcher.pkg.zip" if url.endswith(".zip") else "OpenCore-Patcher.pkg"
             download_obj = network_handler.DownloadObject(url, self.constants.payload_path / file_name)
 
-        thread = threading.Thread(target=_fetch_update)
+        thread = gui_support.ResultThread(target=_fetch_update)
         thread.start()
-        gui_support.wait_for_thread(thread)
+        if not self._wait_for_worker(thread):
+            return
 
         gui_download.DownloadFrame(
             self.frame,
@@ -124,19 +126,21 @@ class UpdateFrame(wx.Frame):
         title_label.Centre(wx.HORIZONTAL)
         wx.Yield()
 
-        thread = threading.Thread(target=self._extract_update)
+        thread = gui_support.ResultThread(target=self._extract_update)
         thread.start()
 
-        gui_support.wait_for_thread(thread)
+        if not self._wait_for_worker(thread):
+            return
 
         # Title: Installing update
         title_label.SetLabel("Installing update...")
         title_label.Centre(wx.HORIZONTAL)
 
-        thread = threading.Thread(target=self._install_update)
+        thread = gui_support.ResultThread(target=self._install_update)
         thread.start()
 
-        gui_support.wait_for_thread(thread)
+        if not self._wait_for_worker(thread):
+            return
 
         # Title: Update complete
         title_label.SetLabel("Update complete!")
@@ -164,10 +168,11 @@ class UpdateFrame(wx.Frame):
         # Adjust frame size
         self.frame.SetSize((-1, launch_label.GetPosition().y + 60))
 
-        thread = threading.Thread(target=self._launch_update)
+        thread = gui_support.ResultThread(target=self._launch_update)
         thread.start()
 
-        gui_support.wait_for_thread(thread)
+        if not self._wait_for_worker(thread):
+            return
 
         timer = 5
         while True:
@@ -202,36 +207,30 @@ class UpdateFrame(wx.Frame):
             ["/usr/bin/ditto", "-xk", str(self.constants.payload_path / "OpenCore-Patcher.pkg.zip"), str(self.constants.payload_path)], capture_output=True
         )
         if result.returncode != 0:
-            logging.error(f"Failed to extract update.")
             subprocess_wrapper.log(result)
-            wx.CallAfter(self.progress_bar_animation.stop_pulse)
-            wx.CallAfter(self.progress_bar.SetValue, 0)
-            wx.CallAfter(wx.MessageBox, f"Failed to extract update. Error: {result.stderr.decode('utf-8')}", "Critical Error!", wx.OK | wx.ICON_ERROR)
-            wx.CallAfter(sys.exit, 1)
+            raise RuntimeError(f"Failed to extract update: {result.stderr.decode('utf-8', errors='replace')}")
 
 
     def _install_update(self) -> None:
-        """
-        Install PKG
-        """
         logging.info(f"Installing update: {self.pkg_download_path}")
-        result = subprocess_wrapper.run_as_root(["/usr/sbin/installer", "-pkg", str(self.pkg_download_path), "-target", "/"], capture_output=True)
+        result = package_trust.install_verified_package(
+            self.pkg_download_path, package_trust.Publisher.PROJECT, source_url=self.url
+        )
         if result.returncode != 0:
-            wx.CallAfter(self.progress_bar_animation.stop_pulse)
-            wx.CallAfter(self.progress_bar.SetValue, 0)
-            if "User cancelled" in result.stderr.decode("utf-8"):
-                logging.info("User cancelled update")
-                wx.CallAfter(wx.MessageBox, "User cancelled update", "Update Cancelled", wx.OK | wx.ICON_INFORMATION)
-            else:
-                logging.critical("Failed to install update.")
-                subprocess_wrapper.log(result)
+            subprocess_wrapper.log(result)
+            raise RuntimeError(f"Update installation failed: {result.stderr.decode('utf-8', errors='replace')}")
 
-                # If it fails, fall back to opening the PKG
-                logging.error("Failed to install update, attempting to open PKG")
-                subprocess.run(["/usr/bin/open", str(self.pkg_download_path)])
 
-                wx.CallAfter(wx.MessageBox, f"Failed to install update. Please try installing the OpenCore-Patcher.pkg manually or download from GitHub", "Critical Error!", wx.OK | wx.ICON_ERROR)
-            wx.CallAfter(sys.exit, 1)
+    def _wait_for_worker(self, thread):
+        try:
+            gui_support.wait_for_thread(thread)
+            return True
+        except Exception as error:
+            logging.exception("Update stopped")
+            self.progress_bar_animation.stop_pulse()
+            self.progress_bar.SetValue(0)
+            wx.MessageBox(str(error), "Update stopped", wx.OK | wx.ICON_ERROR)
+            return False
 
 
     def _launch_update(self) -> None:

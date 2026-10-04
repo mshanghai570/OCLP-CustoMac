@@ -4,6 +4,7 @@ mount.py: Handling macOS root volume mounting and unmounting
 
 import logging
 import plistlib
+import re
 import subprocess
 
 from pathlib import Path
@@ -13,6 +14,8 @@ from .snapshot import APFSSnapshot
 from ...datasets import os_data
 from ...support  import subprocess_wrapper
 
+ROOT_MOUNT_PATH = "/System/Volumes/Update/mnt1"
+
 
 class RootVolumeMount:
 
@@ -21,6 +24,7 @@ class RootVolumeMount:
         self.root_volume_identifier = self._fetch_root_volume_identifier()
 
         self.mount_path = None
+        self.owns_mount = False
 
 
     def _fetch_root_volume_identifier(self) -> str:
@@ -29,17 +33,21 @@ class RootVolumeMount:
 
         ex. / -> disk1s1
         """
+        result = subprocess.run(["/usr/sbin/diskutil", "info", "-plist", "/"], capture_output=True)
+        if result.returncode != 0:
+            raise RuntimeError("Failed to query root volume with diskutil.")
         try:
-            content = plistlib.loads(subprocess.run(["/usr/sbin/diskutil", "info", "-plist", "/"], capture_output=True).stdout)
+            content = plistlib.loads(result.stdout)
         except plistlib.InvalidFileException:
             raise RuntimeError("Failed to parse diskutil output.")
 
         disk = content["DeviceIdentifier"]
 
         if "APFSSnapshot" in content and content["APFSSnapshot"] is True:
-            # Remove snapshot suffix (last 2 characters)
-            # ex. disk1s1s1 -> disk1s1
-            disk = disk[:-2]
+            match = re.fullmatch(r"(disk\d+s\d+)s\d+", disk)
+            if match is None:
+                raise RuntimeError(f"Invalid APFS snapshot disk identifier: {disk}")
+            disk = match.group(1)
 
         return disk
 
@@ -65,16 +73,41 @@ class RootVolumeMount:
 
         # Big Sur and newer implemented APFS snapshots for the root volume
         if self.xnu_major >= os_data.os_data.big_sur.value:
-            if Path("/System/Volumes/Update/mnt1/System/Library/CoreServices/SystemVersion.plist").exists():
-                return "/System/Volumes/Update/mnt1"
-            result = subprocess_wrapper.run_as_root(["/sbin/mount", "-o", "nobrowse", "-t", "apfs", f"/dev/{self.root_volume_identifier}", "/System/Volumes/Update/mnt1"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            if Path(ROOT_MOUNT_PATH, "System/Library/CoreServices/SystemVersion.plist").exists():
+                logging.error("Root mount is already in use; finish or cancel the existing operation first")
+                return None
+            existing = self._mount_info()
+            if existing is None or existing.get("MountPoint") == ROOT_MOUNT_PATH:
+                logging.error("Cannot establish that the root mount location is available")
+                return None
+            result = subprocess_wrapper.run_as_root(["/sbin/mount", "-o", "nobrowse", "-t", "apfs", f"/dev/{self.root_volume_identifier}", ROOT_MOUNT_PATH], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             if result.returncode != 0:
                 logging.error("Failed to mount root volume")
                 subprocess_wrapper.log(result)
                 return None
-            return "/System/Volumes/Update/mnt1"
+            self.mount_path = ROOT_MOUNT_PATH
+            self.owns_mount = True
+            mounted = self._mount_info()
+            if mounted is None or mounted.get("DeviceIdentifier") != self.root_volume_identifier or mounted.get("MountPoint") != ROOT_MOUNT_PATH:
+                logging.error("Mounted root source does not match the expected system volume")
+                self._unmount_root_volume(ignore_errors=False)
+                return None
+            return ROOT_MOUNT_PATH
 
         return None
+
+
+    def _mount_info(self) -> dict | None:
+        result = subprocess.run(["/usr/sbin/diskutil", "info", "-plist", ROOT_MOUNT_PATH], capture_output=True)
+        if result.returncode != 0:
+            return None
+        try:
+            data = plistlib.loads(result.stdout)
+            if not isinstance(data, dict) or not isinstance(data.get("DeviceIdentifier"), str) or not isinstance(data.get("MountPoint"), str):
+                return None
+            return data
+        except (plistlib.InvalidFileException, TypeError, ValueError):
+            return None
 
 
     def _unmount_root_volume(self, ignore_errors: bool = True) -> bool:
@@ -82,6 +115,10 @@ class RootVolumeMount:
         Unmount the root volume.
         """
         if self.xnu_major < os_data.os_data.catalina.value:
+            return True
+        if self.xnu_major >= os_data.os_data.big_sur.value and self.owns_mount is False:
+            return True
+        if self.mount_path is None:
             return True
 
         args = ["/sbin/umount"]
@@ -99,6 +136,8 @@ class RootVolumeMount:
                 subprocess_wrapper.log(result)
             return False
 
+        self.owns_mount = False
+        self.mount_path = None
         return True
 
 
@@ -116,6 +155,7 @@ class RootVolumeMount:
             return None
         if not Path(result).exists():
             logging.error(f"Attempted to mount root volume, but failed: {result}")
+            self._unmount_root_volume(ignore_errors=False)
             return None
 
         self.mount_path = result

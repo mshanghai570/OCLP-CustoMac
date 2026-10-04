@@ -82,29 +82,6 @@ class ZSHFunctions:
         return _script
 
 
-    def generate_set_suid_bit(self) -> str:
-        """
-        ZSH function to set SUID bit
-        """
-
-        _script = ""
-
-        _script += "function _setSUIDBit() {\n"
-        _script += "    local binaryPath=$1\n\n"
-
-        _script += "    echo \"Setting SUID bit on: $binaryPath\"\n\n"
-
-        _script += "    # Check if path is a directory\n"
-        _script += "    if [[ -d $binaryPath ]]; then\n"
-        _script += "        /bin/chmod -R +s $binaryPath\n"
-        _script += "    else\n"
-        _script += "        /bin/chmod +s $binaryPath\n"
-        _script += "    fi\n"
-        _script += "}\n"
-
-        return _script
-
-
     def generate_create_alias(self) -> str:
         """
         ZSH function to create alias
@@ -163,26 +140,6 @@ class ZSHFunctions:
 
         _script += "function _logFile() {\n"
         _script += "    echo \"/Users/Shared/.OCLP-AutoPatcher-Log-$(/bin/date +\"%Y_%m_%d_%I_%M_%p\").txt\"\n"
-        _script += "}\n"
-
-        return _script
-
-
-    def generate_fix_settings_file_permission(self) -> str:
-        """
-        ZSH function to fix settings file permission
-        """
-
-        _script = ""
-
-        _script += "function _fixSettingsFilePermission() {\n"
-        _script += "    local settingsPath=\"$pathToTargetVolume/Users/Shared/.com.dortania.opencore-legacy-patcher.plist\"\n\n"
-
-        _script += "    if [[ -e $settingsPath ]]; then\n"
-        _script += "        echo \"Fixing settings file permissions: $settingsPath\"\n"
-        _script += "        /bin/chmod 666 $settingsPath\n"
-        _script += "    fi\n"
-
         _script += "}\n"
 
         return _script
@@ -280,12 +237,13 @@ class ZSHFunctions:
         _script = ""
 
         _script += "function _main() {\n"
-        _script += "    _setSUIDBit \"$pathToTargetVolume/$helperPath\"\n"
         _script += "    _createAlias \"$pathToTargetVolume/$mainAppPath\" \"$pathToTargetVolume/$shimAppPath\"\n"
         _script += "    _prewarmGatekeeper \"$pathToTargetVolume/$mainAppPath\"\n"
         if is_autopkg:
-            _script += "    _startPatching \"$pathToTargetVolume/$executablePath\"\n"
-            _script += "    _fixSettingsFilePermission\n"
+            _script += "    if ! _startPatching \"$pathToTargetVolume/$executablePath\"; then\n"
+            _script += "        echo \"Root patching failed or was blocked. Review the AutoPatcher log; automatic reboot skipped.\"\n"
+            _script += "        return 1\n"
+            _script += "    fi\n"
             _script += "    _reboot\n"
         _script += "}\n"
 
@@ -370,11 +328,11 @@ class GenerateScripts:
         _script += self._generate_label_bar()
         _script += "\n"
 
-        _files = self.files
+        _files = list(self.files)
         if is_autopkg:
             _files += self.additional_auto_pkg_files
 
-        _script += f"filesToRemove=(\n"
+        _script += "filesToRemove=(\n"
         for _file in _files:
             _script += f"    \"{_file}\"\n"
 
@@ -415,9 +373,9 @@ class GenerateScripts:
         _script += f"# {'AutoPkg Assets' if is_autopkg else 'OpenCore Legacy Patcher'} Post Install Script\n"
         _script += self._generate_header_bar()
         if is_autopkg:
-            _script += "# Set UID, create alias, start patching, and reboot.\n"
+            _script += "# Create alias, start patching, and reboot.\n"
         else:
-            _script += "# Set SUID bit on helper tool, and create app alias.\n"
+            _script += "# Create app alias.\n"
         _script += self._generate_header_bar()
         _script += "\n\n"
 
@@ -428,7 +386,6 @@ class GenerateScripts:
         _script += self._generate_label_bar()
         _script += "\n"
 
-        _script += "helperPath=\"Library/PrivilegedHelperTools/com.dortania.opencore-legacy-patcher.privileged-helper\"\n"
         _script += "mainAppPath=\"Library/Application Support/Dortania/OpenCore-Patcher.app\"\n"
         _script += "shimAppPath=\"Applications/OpenCore-Patcher.app\"\n"
         if is_autopkg:
@@ -440,7 +397,6 @@ class GenerateScripts:
         _script += self._generate_label_bar()
         _script += "\n"
 
-        _script += self.zsh_functions.generate_set_suid_bit()
         _script += "\n"
         _script += self.zsh_functions.generate_create_alias()
         _script += "\n"
@@ -451,7 +407,6 @@ class GenerateScripts:
             _script += "\n"
             _script += self.zsh_functions.generate_log_file()
             _script += "\n"
-            _script += self.zsh_functions.generate_fix_settings_file_permission()
             _script += "\n"
             _script += self.zsh_functions.generate_reboot()
             _script += "\n"

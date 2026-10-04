@@ -422,16 +422,16 @@ class GenerateDefaults:
         if self.ignore_settings_file is True:
             return
 
-        settings_plist = self.settings_plist_path or global_settings.GlobalEnviromentSettings().global_settings_plist
-        if not Path(settings_plist).exists():
-            return
-
-        try:
-            with Path(settings_plist).open("rb") as settings_file:
-                plist = plistlib.load(settings_file)
-        except Exception as e:
-            logging.error("Error: Unable to read global settings file")
-            logging.error(e)
+        if self.settings_plist_path is None:
+            plist = global_settings.GlobalEnviromentSettings().read_settings()
+        else:
+            try:
+                with Path(self.settings_plist_path).open("rb") as settings_file:
+                    plist = plistlib.load(settings_file)
+            except Exception as e:
+                logging.error("Error: Unable to read global settings file: %s", e)
+                return
+        if not isinstance(plist, dict):
             return
 
         for key in plist:

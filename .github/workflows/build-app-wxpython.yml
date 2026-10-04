@@ -96,8 +96,8 @@ jobs:
         run: |
           .venv-build/bin/python -m unittest discover -s tests
           .venv-build/bin/python -m compileall -q opencore_legacy_patcher ci_tooling tests
-          git diff --check
-        
+          .venv-build/bin/python -m ci_tooling.source_whitespace
+
       - name: Prepare Assets (--prepare-assets)
         run: >
           .venv-build/bin/python Build-Project.command

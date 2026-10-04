@@ -303,6 +303,7 @@ class DirectHttpCallInventoryTests(unittest.TestCase):
             ("opencore_legacy_patcher/support/metallib_handler.py", "_get_remote_metallibs", "get"): 1,
             ("opencore_legacy_patcher/support/metallib_handler.py", "_get_tahoe_releases", "get"): 1,
             ("opencore_legacy_patcher/wx_gui/gui_settings.py", "on_nightly", "get"): 1,
+            ("opencore_legacy_patcher/support/package_trust.py", "_release_digest", "get"): 1,
         })
         found_calls: Counter = Counter()
 
@@ -374,8 +375,7 @@ class ReleaseChangelogConsumerTests(unittest.TestCase):
         response.json.side_effect = ValueError("not json")
 
         with mock.patch.object(updates.requests, "get", return_value=response):
-            with self.assertRaises(ValueError):
-                updates.fetch_release_changelog()
+            self.assertEqual(updates.fetch_release_changelog(), updates.CHANGELOG_FALLBACK)
 
         response.close.assert_called_once_with()
 

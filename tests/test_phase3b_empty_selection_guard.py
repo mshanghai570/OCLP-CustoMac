@@ -25,6 +25,11 @@ def empty_selection() -> RootPatchSelection:
 
 
 class Phase3BEmptySelectionGuardTests(unittest.TestCase):
+    def setUp(self):
+        protected_lock = mock.patch("opencore_legacy_patcher.support.operation_lock.RootOperationLock")
+        protected_lock.start()
+        self.addCleanup(protected_lock.stop)
+
     def test_display_disables_start_for_empty_and_reenables_after_wifi_selection(self) -> None:
         display = types.SimpleNamespace(
             constants=types.SimpleNamespace(),

@@ -179,7 +179,7 @@ class RecordedAppleDBSliceTests(unittest.TestCase):
         if payload is None:
             payload = json.loads(APPLEDB_SLICE.read_text(encoding="utf-8"))
         constants = SimpleNamespace(patcher_version="0.0.0-fixture")
-        response = SimpleNamespace(json=lambda: payload, close=mock.Mock())
+        response = SimpleNamespace(json=lambda: payload, raise_for_status=mock.Mock(), close=mock.Mock())
         with mock.patch.object(
                  network_handler.NetworkUtilities, "get", return_value=response
              ), \
@@ -190,6 +190,7 @@ class RecordedAppleDBSliceTests(unittest.TestCase):
                 else AppleDBProducts(constants, max_install_assistant_version=ceiling)
             )
             result = catalogue.products, catalogue.latest_products
+        response.raise_for_status.assert_called_once_with()
         response.close.assert_called_once_with()
         return result
 

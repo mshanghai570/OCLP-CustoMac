@@ -37,6 +37,9 @@ PATCHES = {"Modern Audio": {}, "Modern Wireless": {}}
 
 class PatchPendingRebootTests(unittest.TestCase):
     def setUp(self) -> None:
+        lock = mock.patch("opencore_legacy_patcher.support.operation_lock.RootOperationLock")
+        lock.start()
+        self.addCleanup(lock.stop)
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.directory = Path(self.temporary_directory.name)
         self.metadata_path = self.directory / ROOT_PATCH_METADATA_FILENAME

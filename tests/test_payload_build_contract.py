@@ -369,9 +369,11 @@ class PayloadContractTests(unittest.TestCase):
         contract_type.return_value.validate_application.assert_called_once_with(
             Path("dist/OpenCore-Patcher.app")
         )
-        contract_type.return_value.validate_package.assert_called_once_with(
-            Path("dist/OpenCore-Patcher.pkg")
-        )
+        contract_type.return_value.validate_package.assert_has_calls([
+            mock.call(Path("dist/OpenCore-Patcher.pkg")),
+            mock.call(Path("dist/AutoPkg-Assets.pkg")),
+        ])
+        self.assertEqual(contract_type.return_value.validate_package.call_count, 2)
 
     def test_package_generation_closes_and_removes_temporary_scripts(self) -> None:
         generated_scripts = []

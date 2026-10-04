@@ -32,4 +32,4 @@ jobs:
       - name: Compile validation
         run: .venv-build/bin/python -m compileall -q opencore_legacy_patcher ci_tooling tests
       - name: Source whitespace validation
-        run: git diff --check
+        run: .venv-build/bin/python -m ci_tooling.source_whitespace

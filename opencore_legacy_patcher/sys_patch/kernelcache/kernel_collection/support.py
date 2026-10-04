@@ -6,13 +6,12 @@ import logging
 import plistlib
 
 from pathlib  import Path
-from datetime import datetime
-
-from ...patchsets import COPY_OPERATIONS
+from ...patchsets import PatchType
+from ...root_selection import SELECTABLE_ROOT_PATCHES
 
 from ....datasets import os_data
 from ....support  import subprocess_wrapper
-from ...root_state import ROOT_PATCH_METADATA_PATH
+from ...root_state import ROOT_PATCH_METADATA_PATH, ROOT_PATCH_METADATA_SCHEMA
 
 
 class KernelCacheSupport:
@@ -111,59 +110,61 @@ class KernelCacheSupport:
         return updated_install_location
 
 
-    def clean_auxiliary_kc(self) -> None:
-        """
-        Clean the Auxiliary Kernel Collection
+    def clean_auxiliary_kc(self, *, expected_project_identity: str = None) -> bool:
+        """Remove only recorded Data-volume kexts owned by supported patch families.
 
-        Logic:
-            When reverting root volume patches, the AuxKC will still retain the UUID
-            it was built against. Thus when Boot/SysKC are reverted, Aux will break
-            To resolve this, delete all installed kexts in /L*/E* and rebuild the AuxKC
-            We can verify our binaries based off the OpenCore-Legacy-Patcher.plist file
+        Unusable history is reported without guessing deletion targets. File age
+        and System-volume entries do not establish ownership of Data-volume files.
         """
-
         if self.detected_os < os_data.os_data.big_sur:
-            return
-
-        logging.info("- Cleaning Auxiliary Kernel Collection")
-        if ROOT_PATCH_METADATA_PATH.exists():
+            return True
+        try:
+            if ROOT_PATCH_METADATA_PATH.is_symlink():
+                raise ValueError("patch history is a symlink")
             with ROOT_PATCH_METADATA_PATH.open("rb") as metadata_file:
-                oclp_plist_data = plistlib.load(metadata_file)
-            for key in oclp_plist_data:
-                if isinstance(oclp_plist_data[key], (bool, int)):
-                    continue
-                for install_type in COPY_OPERATIONS:
-                    if install_type not in oclp_plist_data[key]:
-                        continue
-                    for location in oclp_plist_data[key][install_type]:
-                        if not location.endswith("Extensions"):
-                            continue
-                        for file in oclp_plist_data[key][install_type][location]:
-                            if not file.endswith(".kext"):
-                                continue
-                            if not Path(f"/Library/Extensions/{file}").exists():
-                                continue
-                            logging.info(f"  - Removing {file}")
-                            subprocess_wrapper.run_as_root(["/bin/rm", "-Rf", f"/Library/Extensions/{file}"])
+                metadata = plistlib.load(metadata_file)
+        except FileNotFoundError:
+            return True
+        except (OSError, plistlib.InvalidFileException, TypeError, ValueError) as error:
+            logging.warning(f"- Auxiliary cleanup skipped: unusable patch history: {error}")
+            return False
 
-        # Handle situations where users migrated from older OSes with a lot of garbage in /L*/E*
-        # ex. Nvidia Web Drivers, NetUSB, dosdude1's patches, etc.
-        # Move if file's age is older than October 2021 (year before Ventura)
-        if self.detected_os < os_data.os_data.ventura:
-            return
+        supported = set().union(*(definition.patch_names for definition in SELECTABLE_ROOT_PATCHES))
+        try:
+            if not isinstance(metadata, dict) or metadata.get("Metadata Schema") != ROOT_PATCH_METADATA_SCHEMA:
+                raise ValueError("unrecognized patch history")
+            if not expected_project_identity or metadata.get("Project Identity") != expected_project_identity:
+                raise ValueError("patch history belongs to an unknown project")
+            installed = metadata.get("Installed Patches")
+            if not isinstance(installed, list) or not all(isinstance(name, str) and name in supported for name in installed):
+                raise ValueError("unsupported installed patch families")
 
-        relocation_path = "/Library/Relocated Extensions"
-        if not Path(relocation_path).exists():
-            subprocess_wrapper.run_as_root(["/bin/mkdir", relocation_path])
+            # Validate the complete deletion inventory before issuing any command.
+            targets = set()
+            for name in installed:
+                operations = metadata.get(name)
+                if not isinstance(operations, dict):
+                    raise ValueError(f"invalid operations for {name}")
+                for operation in (PatchType.OVERWRITE_DATA_VOLUME, PatchType.MERGE_DATA_VOLUME):
+                    locations = operations.get(operation, {})
+                    if not isinstance(locations, dict):
+                        raise ValueError(f"invalid locations for {name}")
+                    for location, files in locations.items():
+                        if not isinstance(files, dict):
+                            raise ValueError(f"invalid file inventory for {name}")
+                        for filename, source in files.items():
+                            if not isinstance(filename, str) or Path(filename).name != filename or not filename or not isinstance(source, str):
+                                raise ValueError("invalid file ownership record")
+                            if location == "/Library/Extensions" and filename.endswith(".kext"):
+                                targets.add(Path(self.mount_location_data or "/") / "Library/Extensions" / filename)
+            if any(target.parent.is_symlink() or target.is_symlink() for target in targets):
+                raise ValueError("extension cleanup target is a symlink")
+        except (OSError, ValueError) as error:
+            logging.warning(f"- Auxiliary cleanup skipped: {error}")
+            return False
 
-        for file in Path("/Library/Extensions").glob("*.kext"):
-            try:
-                if datetime.fromtimestamp(file.stat().st_mtime) < datetime(2021, 10, 1):
-                    logging.info(f"  - Relocating {file.name} kext to {relocation_path}")
-                    if Path(relocation_path) / Path(file.name).exists():
-                        subprocess_wrapper.run_as_root(["/bin/rm", "-Rf", relocation_path / Path(file.name)])
-                    subprocess_wrapper.run_as_root(["/bin/mv", file, relocation_path])
-            except:
-                # Some users have the most cursed /L*/E* folders
-                # ex. Symlinks pointing to symlinks pointing to dead files
-                pass
+        for target in sorted(targets):
+            if target.exists():
+                logging.info(f"  - Removing owned extension {target.name}")
+                subprocess_wrapper.run_as_root_and_verify(["/bin/rm", "-Rf", str(target)])
+        return True

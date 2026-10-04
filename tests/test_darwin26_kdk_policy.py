@@ -38,6 +38,11 @@ def constants(download_path: Path | None = None):
 
 
 class Darwin26KDKResolverPolicyTests(unittest.TestCase):
+    def setUp(self):
+        protected_lock = mock.patch("opencore_legacy_patcher.support.operation_lock.RootOperationLock")
+        protected_lock.start()
+        self.addCleanup(protected_lock.stop)
+
     def _resolver(self, catalog, *, build="25G99", version="26.6.3", selected=None):
         with mock.patch.object(kdk_handler.KernelDebugKitObject, "_get_remote_kdks", return_value=catalog), \
              mock.patch.object(kdk_handler.KernelDebugKitObject, "_local_kdk_installed", return_value=None):
@@ -165,6 +170,11 @@ class Darwin26KDKResolverPolicyTests(unittest.TestCase):
 
 
 class Darwin26KDKMergePolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        lock = mock.patch("opencore_legacy_patcher.support.operation_lock.RootOperationLock")
+        lock.start()
+        self.addCleanup(lock.stop)
+
     def test_installed_25g82_with_empty_catalog_build_is_accepted(self) -> None:
         """Regression: installed AUTO resolution leaves kdk_url_build empty."""
         with tempfile.TemporaryDirectory() as temporary:

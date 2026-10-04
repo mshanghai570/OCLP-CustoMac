@@ -27,17 +27,18 @@ from opencore_legacy_patcher.sys_patch.utilities import kdk_merge
 class PlistResourceHandleTests(unittest.TestCase):
     def test_global_settings_read_write_and_defaults_migration_close_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            shared = root / "shared.plist"
+            root = Path(temporary).resolve()
+            shared = root / "private" / "settings.plist"
             defaults_file = root / "legacy.plist"
-            with shared.open("wb") as plist_file:
-                plistlib.dump({"keep": True, "remove": True}, plist_file)
             with defaults_file.open("wb") as plist_file:
                 plistlib.dump({"migrated": "yes"}, plist_file)
-            settings = global_settings.GlobalEnviromentSettings.__new__(
-                global_settings.GlobalEnviromentSettings
+            defaults_file.chmod(0o600)
+            settings = global_settings.GlobalEnviromentSettings(
+                settings_path=shared, legacy_paths=(),
             )
-            settings.global_settings_plist = str(shared)
+            settings.write_property("keep", True)
+            settings.write_property("remove", True)
+            settings._legacy_paths = (defaults_file,)
 
             with mock.patch.object(
                 global_settings.plistlib,
@@ -51,15 +52,14 @@ class PlistResourceHandleTests(unittest.TestCase):
                 self.assertTrue(settings.read_property("keep"))
                 settings.write_property("new", 42)
                 settings.delete_property("remove")
-                with mock.patch.object(Path, "expanduser", return_value=defaults_file):
-                    settings._convert_defaults_to_global_settings()
+                settings._convert_defaults_to_global_settings()
 
             self.assertTrue(all(call.args[0].closed for call in plist_load.call_args_list))
             self.assertTrue(all(call.args[1].closed for call in plist_dump.call_args_list))
             with shared.open("rb") as plist_file:
                 final = plistlib.load(plist_file)
-            self.assertEqual(final, {"keep": True, "new": 42, "migrated": "yes"})
-            self.assertFalse(defaults_file.exists())
+            self.assertEqual(final, {"Developed by Dortania": True, "keep": True, "new": 42, "migrated": "yes"})
+            self.assertTrue(defaults_file.exists())
 
     def test_generate_defaults_closes_global_settings_plist(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
