@@ -202,8 +202,37 @@ GET/POST wrappers still return response ownership to callers; streamed downloads
 keep their specialized lifecycle. On 2026-10-04, the 527-test suite was rerun
 successfully (41.059 seconds); `compileall`, `git diff --check`, PSP source
 manifest `--check` (203 published / 15 unpublished), and `validate_source()`
-were also rerun successfully. There was no `dist/` directory, so no built
-release package was available for inspection; package generation was not run.
+were also rerun successfully.
+
+### Release build record (2026-10-04)
+
+The release package was built and validated locally. Source commits:
+`36405ad` (hardening suite), `849206e` (retained deletions), plus this
+documentation commit. The build ran in a clean detached worktree of that exact
+revision — `SourceBuildMetadata` refuses dirty trees — under the locked
+environment enforced by `ci_tooling.build_environment`: the official python.org
+3.14.3 framework (installer and framework hashes verified), pip 25.3,
+`requirements-lock.txt` hash enforcement, and `PYTHONHASHSEED=0`. Because this
+machine has no `/Library/Frameworks`, the staged framework's non-pinned load
+commands were rebased to its staging path; the hash-pinned `Python` dylib was
+not modified, so `verify()` still matched the expected SHA-256.
+
+All gates on the built revision passed: clean-tree `unittest` (527 tests),
+`compileall` and `git diff --check`; payload-contract validation of
+`payloads.dmg` and `Universal-Binaries.dmg`; the application build with
+embedded git metadata and refreshed ad-hoc signature; generation of
+`OpenCore-Patcher.pkg`, `OpenCore-Patcher-Uninstaller.pkg` and
+`AutoPkg-Assets.pkg`; `codesign --verify --deep --strict` against both the
+`dist` app and the expanded-package app; `pkgutil --check-signature`
+reporting `Status: no signature` for both installer packages (expected:
+signing and notarization credentials are not configured, matching CI with
+signing disabled); and `pkgutil --expand-full` plus `rsync -ainc` confirming
+the packaged app is byte-identical to `dist/OpenCore-Patcher.app`.
+
+Artifacts are in `./dist/` of the repository. They are unsigned builds and
+must not be published as final releases. Still open: CI for this exact
+revision, reviewer package inspection, signing/notarization if publishing,
+and Tahoe hardware acceptance.
 
 
 
