@@ -234,6 +234,23 @@ must not be published as final releases. Still open: CI for this exact
 revision, reviewer package inspection, signing/notarization if publishing,
 and Tahoe hardware acceptance.
 
+Update (same day, final revision `9ddd08c` including this documentation
+commit): all three packages were rebuilt and revalidated at that exact
+revision. The first `--prepare-package` attempts failed repeatedly with
+`pkgbuild: error: Cannot write package` because the data volume was at 100%
+capacity; stale pkgbuild temp directories (several GB) and Xcode DerivedData
+caches were cleared to recover space, and the AutoPkg-Assets step was
+completed via the identical `GeneratePackage` code path. Final artifacts and
+`SHA256SUMS.txt` (all verified OK) are preserved in the gitignored
+`Build-Folder/release-2026-10-04/` with a README describing provenance;
+full validation logs remain in `/tmp/OCLP-CustoMac-release/`
+(`validate-pkg2.log`, `validate-pkg3.log`, `build-pkg5.log`,
+`build-autopkg.log`, `validate.log`). Parity of each packaged app against
+`dist/OpenCore-Patcher.app` was re-confirmed by `rsync -ainc --delete` with
+zero file-level deltas. Remaining external gates are unchanged: push for CI,
+Developer ID signing/notarization if publishing, and real Tahoe hardware
+acceptance.
+
 
 
 The earlier baselines carried five failures in the untracked Broadwell
