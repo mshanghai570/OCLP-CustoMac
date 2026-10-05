@@ -118,6 +118,12 @@ jobs:
           --run-as-individual-steps
           --prepare-package
 
+      - name: Prepare Distribution Disk Image (--prepare-dmg)
+        run: >
+          .venv-build/bin/python Build-Project.command
+          --run-as-individual-steps
+          --prepare-dmg
+
       - name: Validate application and package parity
         run: |
           validate_unsigned_package() {
@@ -141,6 +147,23 @@ jobs:
           codesign --verify --deep --strict "package-expanded/OpenCore-Patcher.pkg/Payload/Library/Application Support/Dortania/OpenCore-Patcher.app"
           test -z "$(rsync -ainc --delete --omit-dir-times 'dist/OpenCore-Patcher.app/' 'package-expanded/OpenCore-Patcher.pkg/Payload/Library/Application Support/Dortania/OpenCore-Patcher.app/')"
 
+          # The DMG is the download a user receives, so its members must be the
+          # exact package bytes that were just validated, not a second build.
+          # Compared with cmp rather than rsync: rsync reports a file as
+          # differing on mtime, and hdiutil assigns its own mtimes, so an
+          # rsync dry run would fail on a read-only mount it cannot fix.
+          dist_dmg="$(ls dist/*.dmg)"
+          test -f "$dist_dmg"
+          dmg_mount="$(mktemp -d)"
+          hdiutil attach "$dist_dmg" -mountpoint "$dmg_mount" -nobrowse -readonly
+          trap 'hdiutil detach "$dmg_mount" >/dev/null 2>&1; rmdir "$dmg_mount"' EXIT
+          cmp -s 'dist/OpenCore-Patcher.pkg' "$dmg_mount/OpenCore-Patcher.pkg"
+          cmp -s 'dist/OpenCore-Patcher-Uninstaller.pkg' "$dmg_mount/OpenCore-Patcher-Uninstaller.pkg"
+          hdiutil detach "$dmg_mount"
+          rmdir "$dmg_mount"
+          trap - EXIT
+          hdiutil verify "$dist_dmg"
+
       - name: Upload AutoPkg Package to Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -158,3 +181,10 @@ jobs:
         with:
           name: OpenCore-Patcher-Uninstaller.pkg
           path: ./dist/OpenCore-Patcher-Uninstaller.pkg
+
+      - name: Upload Distribution Disk Image to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OCLP-CustoMac.dmg
+          path: ./dist/*.dmg
+          if-no-files-found: error

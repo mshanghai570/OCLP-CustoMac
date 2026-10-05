@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ci_tooling.build_modules import (
     application,
+    distribution_dmg,
     disk_images,
     package,
     sign_notarize
@@ -51,6 +52,7 @@ def main() -> None:
     parser.add_argument("--prepare-application", action="store_true", help="CI: Prepare Application", default=False)
     parser.add_argument("--prepare-package", action="store_true", help="CI: Prepare Package", default=False)
     parser.add_argument("--prepare-assets", action="store_true", help="CI: Prepare Assets", default=False)
+    parser.add_argument("--prepare-dmg", action="store_true", help="CI: Prepare Distribution Disk Image", default=False)
 
     # Analytics Parameters
     parser.add_argument("--analytics-key", type=str, help="Analytics Key", default=None)
@@ -119,6 +121,21 @@ def main() -> None:
         sign_notarize.SignAndNotarize(
             path=Path("dist/OpenCore-Patcher-Uninstaller.pkg"),
             signing_identity=args.installer_signing_identity,
+            notarization_apple_id=args.notarization_apple_id,
+            notarization_password=args.notarization_password,
+            notarization_team_id=args.notarization_team_id,
+        ).sign_and_notarize()
+
+
+    if (args.run_as_individual_steps is False) or (args.run_as_individual_steps and args.prepare_dmg):
+        # Build the distributable disk image around the signed packages
+        _dmg = distribution_dmg.GenerateDistributionDMG()
+        _dmg.generate()
+
+        # Sign the distribution disk image
+        sign_notarize.SignAndNotarize(
+            path=_dmg.output_path,
+            signing_identity=args.application_signing_identity,
             notarization_apple_id=args.notarization_apple_id,
             notarization_password=args.notarization_password,
             notarization_team_id=args.notarization_team_id,
