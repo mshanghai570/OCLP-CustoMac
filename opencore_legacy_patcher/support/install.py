@@ -125,7 +125,9 @@ class tui_disk_installation:
                 raise ValueError("EFI partition identity cannot be established")
             if before.get("Content") != "EFI" and before.get("FilesystemType") != "msdos":
                 raise ValueError("Selected partition is not an EFI or FAT partition")
-            if before.get("Mounted") is not True:
+            # diskutil's plist uses MountPoint; some macOS releases omit Mounted.
+            before_mount = before.get("MountPoint")
+            if not isinstance(before_mount, str) or not Path(before_mount).is_absolute():
                 logging.info(f"Mounting partition: {full_disk_identifier}")
                 result = subprocess_wrapper.run_as_root(
                     ["/usr/sbin/diskutil", "mount", full_disk_identifier], capture_output=True,
@@ -139,7 +141,7 @@ class tui_disk_installation:
             if mounted.get("DeviceIdentifier") != full_disk_identifier or (mounted.get("DiskUUID") or mounted.get("VolumeUUID")) != identity:
                 raise ValueError("Selected EFI partition changed while mounting")
             mount_point = mounted.get("MountPoint")
-            if mounted.get("Mounted") is not True or not isinstance(mount_point, str) or not Path(mount_point).is_absolute():
+            if not isinstance(mount_point, str) or not Path(mount_point).is_absolute():
                 raise ValueError("EFI partition did not mount")
             mount_path = Path(mount_point)
             success = EFIBootloaderTransaction(
@@ -157,7 +159,7 @@ class tui_disk_installation:
                         icon = self.constants.icon_path_external
                     else:
                         icon = self.constants.icon_path_internal
-                    subprocess_wrapper.run_as_root_and_verify(
+                    subprocess_wrapper.run_and_verify(
                         ["/bin/cp", str(icon), str(mount_path)], capture_output=True,
                     )
                 except Exception as error:
@@ -171,7 +173,7 @@ class tui_disk_installation:
                     current = self._disk_info(full_disk_identifier)
                     if (current.get("DiskUUID") or current.get("VolumeUUID")) != identity:
                         raise ValueError("EFI identity changed; refusing to unmount another volume")
-                    subprocess_wrapper.run_as_root_and_verify(
+                    subprocess_wrapper.run_and_verify(
                         ["/usr/sbin/diskutil", "umount", full_disk_identifier], capture_output=True,
                     )
                 except Exception as error:

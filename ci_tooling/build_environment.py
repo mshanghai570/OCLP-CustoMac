@@ -9,6 +9,7 @@ import platform
 import re
 import sys
 import sysconfig
+import subprocess
 
 from pathlib import Path
 
@@ -20,6 +21,50 @@ EXPECTED_PYTHON_HASH_SEED = "0"
 EXPECTED_PYTHON_FRAMEWORK_SHA256 = "131f5211d7a7ec6279abcc2e4b0b97f8559d8eb77d5a28c22771f9ced084360f"
 LOCK_FILE = Path(__file__).resolve().parents[1] / "requirements-lock.txt"
 PYTHON_VERSION_FILE = Path(__file__).resolve().parents[1] / ".python-version"
+
+
+def verify_pyinstaller_runtime() -> Path:
+    """Check the library PyInstaller will collect, independently of the interpreter.
+
+    A relocated Python.org interpreter can run the pinned framework while
+    PyInstaller resolves its absolute install name to another system framework.
+    Mixing that library with the pinned extension modules corrupts runtime ABI
+    assumptions even when the major/minor version matches.
+    """
+    from PyInstaller.depend.bindepend import get_python_library_path
+
+    selected = get_python_library_path()
+    library = Path(selected) if selected else None
+    digest = hashlib.sha256(library.read_bytes()).hexdigest() if library and library.is_file() else None
+    if digest != EXPECTED_PYTHON_FRAMEWORK_SHA256:
+        raise RuntimeError(
+            f"PyInstaller selected Python library {selected!r} with SHA-256 "
+            f"{digest or 'missing'}; expected {EXPECTED_PYTHON_FRAMEWORK_SHA256}. "
+            "Its library resolution must use the locked Python.org framework before building."
+        )
+    return library
+
+
+def verify_packaged_python_runtime(application: Path) -> None:
+    """Compare Mach-O identities after PyInstaller thinning and signing mutations."""
+    source = Path(sys.base_prefix) / "Python"
+    packaged = application / "Contents/Frameworks/Python.framework/Versions/3.14/Python"
+    if not packaged.is_file():
+        # Relocated Python.org frameworks may be collected as a flat library.
+        packaged = application / "Contents/Frameworks/Python"
+
+    def uuid(path: Path) -> str:
+        result = subprocess.run(
+            ["/usr/bin/otool", "-arch", EXPECTED_ARCHITECTURE, "-l", str(path)],
+            capture_output=True, text=True, check=True,
+        )
+        matches = re.findall(r"^\s*uuid ([0-9A-Fa-f-]{36})\s*$", result.stdout, re.MULTILINE)
+        if len(matches) != 1:
+            raise RuntimeError(f"Cannot establish Python library Mach-O identity: {path}")
+        return matches[0].upper()
+
+    if uuid(source) != uuid(packaged):
+        raise RuntimeError("Packaged Python library differs from the locked build interpreter")
 
 
 def _canonical_name(name: str) -> str:

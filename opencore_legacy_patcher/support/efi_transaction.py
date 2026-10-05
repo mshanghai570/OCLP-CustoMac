@@ -25,7 +25,9 @@ class EFIBootloaderTransaction:
         self.published = set()
 
     def _run(self, args) -> None:
-        subprocess_wrapper.run_as_root_and_verify(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        # The mounted FAT EFI belongs to the mounting user. Per-file escalation
+        # creates separate prompts, including during rollback after cancellation.
+        subprocess_wrapper.run_and_verify(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     def _manifest(self, root: Path) -> dict:
         manifest = {}

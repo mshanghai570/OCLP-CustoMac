@@ -11,6 +11,7 @@ from pathlib import Path
 from opencore_legacy_patcher.volume  import generate_copy_arguments
 from opencore_legacy_patcher.support import subprocess_wrapper
 from ci_tooling.build_metadata import SourceBuildMetadata
+from ci_tooling import build_environment
 
 from .payload_contract import PayloadContract
 
@@ -43,6 +44,7 @@ class GenerateApplication:
         """
         Generate PyInstaller Application
         """
+        build_environment.verify_pyinstaller_runtime()
         if self._application_output.exists():
             subprocess_wrapper.run_and_verify(["/bin/rm", "-rf", self._application_output], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -52,6 +54,7 @@ class GenerateApplication:
             _args.append("--clean")
 
         subprocess_wrapper.run_and_verify(_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        build_environment.verify_packaged_python_runtime(self._application_output)
         PayloadContract().validate_application(self._application_output)
 
 

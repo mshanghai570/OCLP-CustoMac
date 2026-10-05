@@ -319,13 +319,12 @@ class InstallOCFrame(wx.Frame):
         """
         Install OpenCore to disk
         """
-        logging.info(f"Installing OpenCore to {partition}")
-
         logger = logging.getLogger()
         handler = gui_support.ThreadHandler(self.text_box)
         logger.addHandler(handler)
         self.result = False
         try:
+            logging.info(f"Installing OpenCore to {partition}")
             self.result = install.tui_disk_installation(self.constants).install_opencore(partition)
         except Exception:
             logging.error("An internal error occurred while installing:\n")
@@ -361,7 +360,6 @@ class InstallOCFrame(wx.Frame):
         )
         main_menu_frame.Show()
         self.Destroy()
-
 
 
 

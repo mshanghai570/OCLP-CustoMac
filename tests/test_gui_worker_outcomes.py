@@ -70,8 +70,21 @@ class GUIWorkerOutcomeTests(unittest.TestCase):
         self.assertIs(install_frame.result, False)
         self.assertEqual(logger.handlers, original)
 
-    def test_queued_logging_ignores_closed_handler(self):
+    def test_queued_logging_survives_worker_handler_close(self):
         box = mock.Mock()
+        box.IsBeingDeleted.return_value = False
+        handler = gui_support.ThreadHandler(box)
+        record = logging.LogRecord("test", logging.INFO, __file__, 1, "text", (), None)
+        with mock.patch.object(gui_support.wx, "CallAfter") as callback:
+            handler.emit(record)
+            handler.close()
+            call = callback.call_args
+            call.args[0](*call.args[1:])
+        box.AppendText.assert_called_once_with("text\n")
+
+    def test_queued_logging_ignores_destroyed_control(self):
+        box = mock.Mock()
+        box.IsBeingDeleted.return_value = True
         handler = gui_support.ThreadHandler(box)
         record = logging.LogRecord("test", logging.INFO, __file__, 1, "text", (), None)
         with mock.patch.object(gui_support.wx, "CallAfter") as callback:
@@ -80,4 +93,3 @@ class GUIWorkerOutcomeTests(unittest.TestCase):
             call = callback.call_args
             call.args[0](*call.args[1:])
         box.AppendText.assert_not_called()
-

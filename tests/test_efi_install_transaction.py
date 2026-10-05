@@ -25,6 +25,7 @@ class EFIInstallTransactionTests(unittest.TestCase):
         self.source.mkdir()
         self.esp.mkdir()
         self.mounted = False
+        self.omit_mounted_key = False
         self.commands = []
         self.fail_command = None
         self.fail_copy = False
@@ -73,6 +74,8 @@ class EFIInstallTransactionTests(unittest.TestCase):
                         if args[-1] == "disk9s1" else {"MediaName": "Test Drive", "SolidState": False})
                 if self.mounted:
                     data["MountPoint"] = str(self.esp)
+                if self.omit_mounted_key:
+                    data.pop("Mounted", None)
                 return subprocess.CompletedProcess(args, 0, plistlib.dumps(data), b"")
             if args[1] in ("mount", "umount", "unmount"):
                 self.mounted = args[1] == "mount"
@@ -117,6 +120,13 @@ class EFIInstallTransactionTests(unittest.TestCase):
         self.assert_original_active()
         self.assertFalse(self.mounted)
 
+    def test_efi_copy_does_not_request_administrator_authorization(self):
+        tx = install.EFIBootloaderTransaction(self.source, self.esp, False)
+        target = self.esp / "ordinary-user-copy"
+        with mock.patch.object(install.subprocess_wrapper, "run_as_root_and_verify", side_effect=AssertionError("Unexpected administrator prompt")):
+            tx._run(["/bin/cp", str(self.source / "EFI/OC/OpenCore.efi"), str(target)])
+        self.assertEqual(target.read_bytes(), b"new OpenCore")
+
     def test_insufficient_space_preserves_existing_bootloader(self):
         self.assertFalse(self.perform_install(free_space=0))
         self.assert_original_active()
@@ -149,6 +159,18 @@ class EFIInstallTransactionTests(unittest.TestCase):
         self.mounted = True
         self.assertTrue(self.perform_install())
         self.assertTrue(self.mounted)
+
+    def test_mount_succeeds_without_diskutil_mounted_key(self):
+        self.omit_mounted_key = True
+        self.assertTrue(self.perform_install())
+        self.assertFalse(self.mounted)
+
+    def test_preexisting_mount_without_mounted_key_is_left_mounted(self):
+        self.omit_mounted_key = True
+        self.mounted = True
+        self.assertTrue(self.perform_install())
+        self.assertTrue(self.mounted)
+        self.assertFalse(any(command[0] == "/usr/sbin/diskutil" for command in self.commands))
 
     def test_bootstrap_already_in_fallback_layout_is_preserved(self):
         self.constants.boot_efi = True

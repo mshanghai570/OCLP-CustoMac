@@ -280,8 +280,8 @@ class ThreadHandler(logging.Handler):
             wx.CallAfter(self._append, self.format(record) + '\n')
 
     def _append(self, message):
-        if self._closed:
-            return
+        # Closing stops new records; already queued messages still belong to
+        # the live control and must survive a fast worker finishing.
         try:
             if self.text_box and not self.text_box.IsBeingDeleted():
                 self.text_box.AppendText(message)

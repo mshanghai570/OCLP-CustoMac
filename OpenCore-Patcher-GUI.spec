@@ -14,6 +14,19 @@ from PyInstaller.building.build_main import Analysis
 sys.path.append(os.path.abspath(os.getcwd()))
 
 from opencore_legacy_patcher import constants
+from ci_tooling import build_environment
+
+# Resolve again in the actual PyInstaller process: the build interpreter's
+# identity alone does not establish which framework its bootloader will ship.
+build_environment.verify_pyinstaller_runtime()
+
+# Relocated Python.org interpreters retain absolute framework install names in
+# extension modules. Collect their private dependencies explicitly so dyld
+# environment variables cannot hide missing libraries during verification.
+python_binaries = [
+   (str(Path(sys.base_prefix) / 'lib' / name), '.')
+   for name in ('libncurses.6.dylib', 'libcrypto.3.dylib', 'libssl.3.dylib', 'libzstd.1.dylib')
+]
 
 
 source_date_epoch = os.environ.get("SOURCE_DATE_EPOCH")
@@ -37,7 +50,7 @@ if Path("DortaniaInternalResources.dmg").exists():
 
 a = Analysis(['OpenCore-Patcher-GUI.command'],
              pathex=[],
-             binaries=[],
+             binaries=python_binaries,
              datas=datas,
              hiddenimports=[],
              hookspath=[],
